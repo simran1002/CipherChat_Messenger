@@ -13,7 +13,7 @@ const RegisterPage = (props) => {
     const password = passwordRef.current.value;
 
     axios
-      .post("http://localhost:8000/user/register", {
+      .post("https://cipherchat-messenger.onrender.com/user/register", {
         name,
         email,
         password,

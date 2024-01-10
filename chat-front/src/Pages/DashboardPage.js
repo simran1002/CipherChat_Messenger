@@ -105,7 +105,7 @@ const DashboardPage = (props) => {
 
   const getChatrooms = () => {
     axios
-      .get("http://localhost:8000/chatroom", {
+      .get("https://cipherchat-messenger.onrender.com/chatroom", {
         headers: {
           Authorization: "Bearer " + localStorage.getItem("CC_Token"),
         },
@@ -127,7 +127,7 @@ const DashboardPage = (props) => {
     const chatroomName = chatroomNameRef.current.value;
 
     axios
-      .post("http://localhost:8000/chatroom", {
+      .post("https://cipherchat-messenger.onrender.com/chatroom", {
         name: chatroomName,
       }, {
         headers: {
