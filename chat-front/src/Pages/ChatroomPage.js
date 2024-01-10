@@ -58,7 +58,7 @@ const { chatroomId } = useParams();
   return (
     <div className="chatroomPage">
       <div className="chatroomSection">
-        <div className="cardHeader">Chatroom Name</div>
+        <div className="cardHeader">Welcome to Chatroom </div>
         <div className="chatroomContent">
           {messages.map((message, i) => (
             <div key={i} className="message">
