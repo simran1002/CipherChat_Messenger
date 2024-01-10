@@ -44,7 +44,7 @@ const RegisterPage = (props) => {
             type="text"
             name="name"
             id="name"
-            placeholder="John Doe"
+            placeholder="Enter your name"
             ref={nameRef}
           />
         </div>
@@ -62,12 +62,13 @@ const RegisterPage = (props) => {
         <input
           type="password"
           name="password"
-          id="password"
+          id="password" 
           placeholder="Your Password"
           ref={passwordRef}
         />
       </div>
       <button onClick={registerUser}>Register</button>
+      <Link to={"/login"}></Link>
     </div>
   );
 };
