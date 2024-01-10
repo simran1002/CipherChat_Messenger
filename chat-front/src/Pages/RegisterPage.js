@@ -68,7 +68,7 @@ const RegisterPage = (props) => {
         />
       </div>
       <button onClick={registerUser}>Register</button>
-      <Link to={"/login"}></Link>
+      {/* <Link to={"/login"}></Link> */}
     </div>
   );
 };
