@@ -44,7 +44,7 @@ const RegisterPage = (props) => {
             type="text"
             name="name"
             id="name"
-            placeholder="Enter your name"
+            placeholder="Enter Your Name"
             ref={nameRef}
           />
         </div>
