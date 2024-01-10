@@ -3,12 +3,13 @@ import axios from "axios";
 import makeToast from "../Toaster";
 import { useNavigate } from "react-router-dom";
 
-const RegisterPage = (props) => {
+const RegisterPage = () => {
   const nameRef = React.createRef();
   const emailRef = React.createRef();
   const passwordRef = React.createRef();
+  const navigate = useNavigate(); // Add this line
 
-  const registerUser = (props) => {
+  const registerUser = () => {
     const name = nameRef.current.value;
     const email = emailRef.current.value;
     const password = passwordRef.current.value;
@@ -21,7 +22,7 @@ const RegisterPage = (props) => {
       })
       .then((response) => {
         makeToast("success", response.data.message);
-        props.history.push("/login");
+        navigate("/login"); // Use navigate instead of props.history.push
       })
       .catch((err) => {
         console.log(err);
@@ -69,8 +70,6 @@ const RegisterPage = (props) => {
         />
       </div>
       <button onClick={registerUser}>Register</button>
-      navigate("/login")
-      {/* <Link to={"/login"}></Link> */}
     </div>
   );
 };

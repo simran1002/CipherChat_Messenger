@@ -1,10 +1,12 @@
 import React from "react";
 import makeToast from "../Toaster";
 import axios from "axios";
+import { useNavigate } from "react-router-dom"; // Import useNavigate
 
-const LoginPage = (props) => {
+const LoginPage = () => {
   const emailRef = React.createRef();
   const passwordRef = React.createRef();
+  const navigate = useNavigate(); // Initialize useNavigate
 
   const loginUser = () => {
     const email = emailRef.current.value;
@@ -18,8 +20,7 @@ const LoginPage = (props) => {
       .then((response) => {
         makeToast("success", response.data.message);
         localStorage.setItem("CC_Token", response.data.token);
-        props.history.push("/dashboard");
-        props.setupSocket();
+        navigate("/dashboard"); // Use navigate to go to the dashboard page
       })
       .catch((err) => {
         if (
