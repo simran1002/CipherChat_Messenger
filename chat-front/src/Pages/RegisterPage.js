@@ -1,6 +1,7 @@
 import React from "react";
 import axios from "axios";
 import makeToast from "../Toaster";
+import { useNavigate } from "react-router-dom";
 
 const RegisterPage = (props) => {
   const nameRef = React.createRef();
@@ -68,6 +69,7 @@ const RegisterPage = (props) => {
         />
       </div>
       <button onClick={registerUser}>Register</button>
+      navigate("/login")
       {/* <Link to={"/login"}></Link> */}
     </div>
   );

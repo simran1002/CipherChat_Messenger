@@ -4,7 +4,7 @@ import { useParams } from "react-router-dom";
 // import { useNavigate } from "react-router-dom";
 
 const ChatroomPage = ({ match, socket }) => {
-//   const navigate = useNavigate();
+  // const navigate = useNavigate();
 const { chatroomId } = useParams();
 //   const chatroomId = match.params.id;
   const [messages, setMessages] = React.useState([]);
