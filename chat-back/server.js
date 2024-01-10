@@ -4,7 +4,6 @@ const mongoose = require("mongoose");
 mongoose.connect(process.env.DATABASE, {
   useUnifiedTopology: true,
   useNewUrlParser: true,
-  retryWrites: true,
 });
 
 mongoose.connection.on("error", (err) => {
