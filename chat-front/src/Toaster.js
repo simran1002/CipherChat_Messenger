@@ -1,22 +1,12 @@
-import Swal from "sweetalert2";
+// This file is kept for backward compatibility
+// The new Toaster component is in components/Toaster.js
 
-const Toast = Swal.mixin({
-  toast: true,
-  position: "top-end",
-  showConfirmButton: false,
-  timer: 3000,
-  timerProgressBar: true,
-  onOpen: (toast) => {
-    toast.addEventListener("mouseenter", Swal.stopTimer);
-    toast.addEventListener("mouseleave", Swal.resumeTimer);
-  },
-});
-
-const makeToast = (type, msg) => {
-  Toast.fire({
-    icon: type,
-    title: msg,
-  });
+const makeToast = (type, message) => {
+  if (window.makeToast) {
+    window.makeToast(type, message);
+  } else {
+    console.log(`${type}: ${message}`);
+  }
 };
 
 export default makeToast;

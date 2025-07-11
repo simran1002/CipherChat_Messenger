@@ -15,6 +15,10 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: "Password is required!",
     },
+    dp: {
+      type: String, // base64 string or image URL
+      default: '',
+    },
   },
   {
     timestamps: true,

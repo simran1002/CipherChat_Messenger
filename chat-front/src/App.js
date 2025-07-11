@@ -1,16 +1,19 @@
-import React from "react";
-// import { BrowserRouter as Router, Route } from 'react-router-dom';
-import { BrowserRouter as Router, Route,Routes} from 'react-router-dom'; // Switch is not needed, use Routes
+import React, { useState, useEffect } from "react";
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import LoginPage from "./Pages/LoginPage";
 import RegisterPage from "./Pages/RegisterPage";
 import DashboardPage from "./Pages/DashboardPage";
 import IndexPage from "./Pages/IndexPage";
 import ChatroomPage from "./Pages/ChatroomPage";
+import Header from "./components/Header";
+import Toaster from "./components/Toaster";
+
 import io from "socket.io-client";
-import makeToast from "./Toaster";
 
 function App() {
-  const [socket, setSocket] = React.useState(null);
+  const [socket, setSocket] = useState(null);
+  const [user, setUser] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   const setupSocket = () => {
     const token = localStorage.getItem("CC_Token");
@@ -24,66 +27,118 @@ function App() {
       newSocket.on("disconnect", () => {
         setSocket(null);
         setTimeout(setupSocket, 3000);
-        makeToast("error", "Socket Disconnected!");
+        if (window.makeToast) {
+          window.makeToast("error", "Socket Disconnected!");
+        }
       });
 
       newSocket.on("connect", () => {
-        makeToast("success", "Socket Connected!");
+        if (window.makeToast) {
+          window.makeToast("success", "Socket Connected!");
+        }
       });
 
       setSocket(newSocket);
     }
   };
 
-  React.useEffect(() => {
-    setupSocket();
-    //eslint-disable-next-line
+  const handleLogout = () => {
+    if (socket) {
+      socket.disconnect();
+      setSocket(null);
+    }
+    setUser(null);
+    localStorage.removeItem("CC_Token");
+    localStorage.removeItem("CC_User");
+  };
+
+  const getUserFromToken = () => {
+    const token = localStorage.getItem("CC_Token");
+    const userStr = localStorage.getItem("CC_User");
+    if (token && userStr) {
+      try {
+        const userObj = JSON.parse(userStr);
+        setUser(userObj);
+        return userObj;
+      } catch (error) {
+        localStorage.removeItem("CC_User");
+        return null;
+      }
+    }
+    return null;
+  };
+
+  useEffect(() => {
+    const userData = getUserFromToken();
+    if (userData) {
+      setupSocket();
+    }
+    setIsLoading(false);
   }, []);
 
-  // return (
-  //   <Router>
-  //     <Switch>
-  //       <Route path="/" component={IndexPage} exact />
-  //       <Route
-  //         path="/login"
-  //         render={() => <LoginPage setupSocket={setupSocket} />}
-  //         exact
-  //       />
-  //       <Route path="/register" component={RegisterPage} exact />
-  //       <Route
-  //         path="/dashboard"
-  //         render={() => <DashboardPage socket={socket} />}
-  //         exact
-  //       />
-  //       <Route
-  //         path="/chatroom/:id"
-  //         render={() => <ChatroomPage socket={socket} />}
-  //         exact
-  //       />
-  //     </Switch>
-  //   </Router>
-  // );
+  // Protected Route Component
+  const ProtectedRoute = ({ children }) => {
+    const token = localStorage.getItem("CC_Token");
+    if (!token) {
+      return <Navigate to="/login" replace />;
+    }
+    return children;
+  };
 
-
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="loading-dots mx-auto mb-4">
+            <div></div>
+            <div></div>
+            <div></div>
+          </div>
+          <p className="text-gray-600">Loading CipherChat...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <Router>
-      <Routes>
-        <Route path="/" element={<IndexPage />} />
-        <Route
-          path="/login"
-          element={<LoginPage setupSocket={setupSocket} />}
-        />
-        <Route path="/register" element={<RegisterPage />} />
-        <Route
-          path="/dashboard"
-          element={<DashboardPage socket={socket} />}
-        />
-        <Route
-          path="/chatroom/:id"
-          element={<ChatroomPage socket={socket} />}
-        />
-      </Routes>
+      <div className="min-h-screen bg-gray-50">
+        <Header user={user} onLogout={handleLogout} />
+        <main>
+          <Routes>
+            <Route path="/" element={<IndexPage />} />
+            <Route 
+              path="/login" 
+              element={
+                user ? <Navigate to="/dashboard" replace /> : <LoginPage setupSocket={setupSocket} setUser={setUser} />
+              } 
+            />
+            <Route 
+              path="/register" 
+              element={
+                user ? <Navigate to="/dashboard" replace /> : <RegisterPage />
+              } 
+            />
+            <Route
+              path="/dashboard"
+              element={
+                <ProtectedRoute>
+                  <DashboardPage socket={socket} />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/chatroom/:chatroomId"
+              element={
+                <ProtectedRoute>
+                  <ChatroomPage socket={socket} />
+                </ProtectedRoute>
+              }
+            />
+          </Routes>
+        </main>
+        <Toaster />
+      </div>
     </Router>
   );
 }

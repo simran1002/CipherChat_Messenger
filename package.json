@@ -1,0 +1,16 @@
+{
+  "name": "cipher-messenger",
+  "version": "1.0.0",
+  "description": "A modern MERN stack chat application",
+  "main": "index.js",
+  "scripts": {
+    "start": "echo \"Starting both frontend and backend...\" && start cmd /k \"cd chat-back && npm start\" && start cmd /k \"cd chat-front && npm start\"",
+    "server": "cd chat-back && npm start",
+    "client": "cd chat-front && npm start",
+    "dev": "echo \"Starting both frontend and backend...\" && start cmd /k \"cd chat-back && npm start\" && start cmd /k \"cd chat-front && npm start\"",
+    "install-all": "cd chat-back && npm install && cd ../chat-front && npm install"
+  },
+  "keywords": ["chat", "messenger", "mern", "react", "nodejs"],
+  "author": "",
+  "license": "ISC"
+}

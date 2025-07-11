@@ -4,7 +4,7 @@ const sha256 = require("js-sha256");
 const jwt = require("jwt-then");
 
 exports.register = async (req, res) => {
-  const { name, email, password } = req.body;
+  const { name, email, password, dp } = req.body;
 
   const emailRegex = /@gmail.com|@yahoo.com|@hotmail.com|@live.com/;
 
@@ -21,6 +21,7 @@ exports.register = async (req, res) => {
     name,
     email,
     password: sha256(password + process.env.SALT),
+    dp: dp || '', // save dp if provided
   });
 
   await user.save();
@@ -44,5 +45,10 @@ exports.login = async (req, res) => {
   res.json({
     message: "User logged in successfully!",
     token,
+    user: {
+      name: user.name,
+      email: user.email,
+      dp: user.dp || '',
+    },
   });
 };
