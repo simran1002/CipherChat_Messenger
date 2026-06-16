@@ -1,122 +1,85 @@
-import React, { useState } from 'react';
-import { 
-  TrashIcon, 
-  ExclamationTriangleIcon,
-  XMarkIcon 
-} from '@heroicons/react/24/outline';
+import React, { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { TrashIcon, ExclamationTriangleIcon, XMarkIcon } from "@heroicons/react/24/outline";
 
-const MessageDelete = ({ 
-  message, 
-  onDelete, 
-  onCancel, 
-  isDeleting = false 
-}) => {
-  const [showConfirmation, setShowConfirmation] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
+/**
+ * Props:
+ *   messageId       – the message _id
+ *   messagePreview  – first ~80 chars of the message for preview
+ *   onDelete(messageId) – async callback; parent calls API + updates state
+ *   onCancel()          – dismiss without deleting
+ */
+const MessageDelete = ({ messageId, messagePreview, onDelete, onCancel }) => {
+  const [processing, setProcessing] = useState(false);
 
-  const handleDeleteClick = () => {
-    setShowConfirmation(true);
+  const handleConfirm = async () => {
+    setProcessing(true);
+    await onDelete(messageId);
+    setProcessing(false);
   };
 
-  const handleConfirmDelete = async () => {
-    setIsProcessing(true);
-    try {
-      await onDelete(message._id);
-      setShowConfirmation(false);
-    } catch (error) {
-      console.error('Error deleting message:', error);
-      alert('Failed to delete message. Please try again.');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleCancelDelete = () => {
-    setShowConfirmation(false);
-    onCancel();
-  };
-
-  if (showConfirmation) {
-    return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-md">
-          {/* Header */}
-          <div className="flex items-center space-x-3 p-6 border-b border-gray-200 dark:border-gray-700">
-            <div className="p-2 bg-red-100 dark:bg-red-900 rounded-lg">
-              <ExclamationTriangleIcon className="w-6 h-6 text-red-600 dark:text-red-400" />
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+        onClick={onCancel}
+      >
+        <motion.div
+          initial={{ scale: 0.9, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          exit={{ scale: 0.9, opacity: 0 }}
+          className="bg-gray-800 border border-gray-700 rounded-2xl w-full max-w-sm shadow-2xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center gap-3 p-5 border-b border-gray-700">
+            <div className="p-2 bg-red-500/20 rounded-xl">
+              <ExclamationTriangleIcon className="w-5 h-5 text-red-400" />
             </div>
             <div>
-              <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">
-                Delete Message
-              </h3>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                This action cannot be undone
-              </p>
+              <h3 className="font-semibold text-white">Delete Message</h3>
+              <p className="text-xs text-gray-500">This cannot be undone</p>
             </div>
+            <button onClick={onCancel} className="ml-auto p-1 text-gray-500 hover:text-white transition-colors">
+              <XMarkIcon className="w-4 h-4" />
+            </button>
           </div>
 
-          {/* Content */}
-          <div className="p-6">
-            <p className="text-gray-700 dark:text-gray-300 mb-4">
-              Are you sure you want to delete this message? This action cannot be undone.
-            </p>
-            
-            {/* Message Preview */}
-            <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-3 mb-4">
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
-                Message preview:
-              </p>
-              <p className="text-gray-900 dark:text-gray-100 text-sm">
-                {message.content?.length > 100 
-                  ? `${message.content.substring(0, 100)}...` 
-                  : message.content
-                }
-              </p>
-            </div>
+          <div className="p-5">
+            <p className="text-sm text-gray-400 mb-3">Are you sure you want to delete this message?</p>
+            {messagePreview && (
+              <div className="bg-gray-700/50 border border-gray-700 rounded-xl p-3 text-sm text-gray-400 italic line-clamp-2">
+                "{messagePreview}"
+              </div>
+            )}
           </div>
 
-          {/* Actions */}
-          <div className="flex items-center justify-end space-x-3 p-6 border-t border-gray-200 dark:border-gray-700">
+          <div className="flex gap-3 px-5 pb-5">
             <button
-              onClick={handleCancelDelete}
-              disabled={isProcessing}
-              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 disabled:opacity-50"
+              onClick={onCancel}
+              disabled={processing}
+              className="flex-1 py-2 rounded-xl border border-gray-600 text-gray-300 hover:text-white hover:border-gray-500 text-sm font-medium transition-all"
             >
               Cancel
             </button>
             <button
-              onClick={handleConfirmDelete}
-              disabled={isProcessing}
-              className="px-6 py-2 bg-red-600 hover:bg-red-700 disabled:bg-gray-400 text-white text-sm font-medium rounded-lg transition-colors duration-200 disabled:cursor-not-allowed flex items-center space-x-2"
+              onClick={handleConfirm}
+              disabled={processing}
+              className="flex-1 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2 transition-all"
             >
-              {isProcessing ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  <span>Deleting...</span>
-                </>
+              {processing ? (
+                <><div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> Deleting…</>
               ) : (
-                <>
-                  <TrashIcon className="w-4 h-4" />
-                  <span>Delete</span>
-                </>
+                <><TrashIcon className="w-3.5 h-3.5" /> Delete</>
               )}
             </button>
           </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <button
-      onClick={handleDeleteClick}
-      disabled={isDeleting}
-      className="p-1 rounded-full hover:bg-red-100 dark:hover:bg-red-900 transition-colors duration-200 opacity-0 group-hover:opacity-100 disabled:opacity-50"
-      title="Delete message"
-    >
-      <TrashIcon className="w-3 h-3 text-red-500" />
-    </button>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
   );
 };
 
-export default MessageDelete; 
+export default MessageDelete;

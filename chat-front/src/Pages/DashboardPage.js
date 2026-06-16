@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
+import {
   PlusIcon,
   ChatBubbleLeftRightIcon,
-  UsersIcon,
   ClockIcon,
-  MagnifyingGlassIcon
+  MagnifyingGlassIcon,
+  ArrowRightIcon,
+  UserCircleIcon,
 } from "@heroicons/react/24/outline";
 import makeToast from "../Toaster";
-import axios from "axios";
+import api from "../services/api";
 
 const DashboardPage = ({ socket }) => {
   const [chatrooms, setChatrooms] = useState([]);
@@ -21,14 +22,7 @@ const DashboardPage = ({ socket }) => {
 
   const getChatrooms = async () => {
     try {
-      const response = await axios.get(
-        "https://cipherchat-messenger.onrender.com/chatroom",
-        {
-          headers: {
-            Authorization: "Bearer " + localStorage.getItem("CC_Token"),
-          },
-        }
-      );
+      const response = await api.get("/chatroom");
       setChatrooms(response.data);
     } catch (err) {
       console.error("Error fetching chatrooms:", err);
@@ -51,83 +45,76 @@ const DashboardPage = ({ socket }) => {
 
     setIsCreating(true);
     try {
-      const response = await axios.post(
-        "https://cipherchat-messenger.onrender.com/chatroom",
-        {
-          name: newChatroomName.trim(),
-        },
-        {
-          headers: {
-            Authorization: "Bearer " + localStorage.getItem("CC_Token"),
-          },
-        }
-      );
-      
+      const response = await api.post("/chatroom", {
+        name: newChatroomName.trim(),
+      });
       makeToast("success", response.data.message);
       setNewChatroomName("");
       setShowCreateForm(false);
       getChatrooms();
     } catch (err) {
-      if (err?.response?.data?.message) {
-        makeToast("error", err.response.data.message);
-      } else {
-        makeToast("error", "Failed to create chatroom");
-      }
+      makeToast(
+        "error",
+        err?.response?.data?.message || "Failed to create chatroom"
+      );
     } finally {
       setIsCreating(false);
     }
   };
 
-  const filteredChatrooms = chatrooms.filter(chatroom =>
+  const filteredChatrooms = chatrooms.filter((chatroom) =>
     chatroom.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const formatDate = (dateString) => {
+    if (!dateString) return "";
     const date = new Date(dateString);
     const now = new Date();
     const diffInHours = (now - date) / (1000 * 60 * 60);
-    
-    if (diffInHours < 24) {
-      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } else if (diffInHours < 48) {
-      return 'Yesterday';
-    } else {
-      return date.toLocaleDateString();
-    }
+
+    if (diffInHours < 1) return "Just now";
+    if (diffInHours < 24)
+      return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    if (diffInHours < 48) return "Yesterday";
+    return date.toLocaleDateString();
   };
+
+  const chatroomColors = [
+    "from-blue-500 to-cyan-500",
+    "from-purple-500 to-pink-500",
+    "from-green-500 to-emerald-500",
+    "from-orange-500 to-red-500",
+    "from-indigo-500 to-violet-500",
+    "from-teal-500 to-cyan-500",
+  ];
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center">
         <div className="text-center">
-          <div className="loading-dots mx-auto mb-4">
-            <div></div>
-            <div></div>
-            <div></div>
-          </div>
-          <p className="text-gray-600">Loading chatrooms...</p>
+          <div className="w-12 h-12 border-4 border-primary-400 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-gray-400">Loading chatrooms...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white shadow-sm border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="flex items-center justify-between">
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
+      <div className="bg-gray-800/50 backdrop-blur-sm border-b border-gray-700/50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">Chatrooms</h1>
-              <p className="text-gray-600 mt-1">
-                Join existing conversations or create new ones
+              <h1 className="text-3xl font-bold text-white">Chatrooms</h1>
+              <p className="text-gray-400 mt-1">
+                {chatrooms.length} {chatrooms.length === 1 ? "room" : "rooms"} available
               </p>
             </div>
             <motion.button
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               onClick={() => setShowCreateForm(true)}
-              className="btn-primary flex items-center space-x-2"
+              className="bg-gradient-to-r from-primary-500 to-secondary-500 hover:from-primary-600 hover:to-secondary-600 text-white font-medium px-5 py-2.5 rounded-xl flex items-center space-x-2 shadow-lg shadow-primary-500/25 transition-all"
             >
               <PlusIcon className="w-5 h-5" />
               <span>New Chatroom</span>
@@ -137,45 +124,43 @@ const DashboardPage = ({ socket }) => {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Search Bar */}
         <div className="mb-8">
           <div className="relative max-w-md">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <MagnifyingGlassIcon className="h-5 w-5 text-gray-400" />
+            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+              <MagnifyingGlassIcon className="h-5 w-5 text-gray-500" />
             </div>
             <input
               type="text"
               placeholder="Search chatrooms..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="input-field pl-10"
+              className="w-full bg-gray-800/50 border border-gray-700 text-white rounded-xl pl-12 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent placeholder-gray-500 transition-all"
             />
           </div>
         </div>
 
-        {/* Create Chatroom Modal */}
         <AnimatePresence>
           {showCreateForm && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50"
               onClick={() => setShowCreateForm(false)}
             >
               <motion.div
                 initial={{ scale: 0.9, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0.9, opacity: 0 }}
-                className="card p-6 w-full max-w-md"
+                className="bg-gray-800 border border-gray-700 rounded-2xl p-6 w-full max-w-md shadow-2xl"
                 onClick={(e) => e.stopPropagation()}
               >
-                <h2 className="text-xl font-semibold text-gray-900 mb-4">
+                <h2 className="text-xl font-semibold text-white mb-4">
                   Create New Chatroom
                 </h2>
                 <form onSubmit={createChatroom} className="space-y-4">
                   <div>
-                    <label htmlFor="chatroomName" className="block text-sm font-medium text-gray-700 mb-2">
+                    <label htmlFor="chatroomName" className="block text-sm font-medium text-gray-300 mb-2">
                       Chatroom Name
                     </label>
                     <input
@@ -183,23 +168,27 @@ const DashboardPage = ({ socket }) => {
                       id="chatroomName"
                       value={newChatroomName}
                       onChange={(e) => setNewChatroomName(e.target.value)}
-                      className="input-field"
+                      className="w-full bg-gray-700/50 border border-gray-600 text-white rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent placeholder-gray-500 transition-all"
                       placeholder="Enter chatroom name"
+                      maxLength={50}
                       required
                     />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Letters, numbers, spaces, hyphens, and underscores only
+                    </p>
                   </div>
-                  <div className="flex space-x-3">
+                  <div className="flex space-x-3 pt-2">
                     <button
                       type="button"
                       onClick={() => setShowCreateForm(false)}
-                      className="btn-outline flex-1"
+                      className="flex-1 py-2.5 rounded-xl border border-gray-600 text-gray-300 hover:text-white hover:border-gray-500 transition-all font-medium"
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
                       disabled={isCreating}
-                      className="btn-primary flex-1 disabled:opacity-50"
+                      className="flex-1 bg-gradient-to-r from-primary-500 to-secondary-500 hover:from-primary-600 hover:to-secondary-600 text-white py-2.5 rounded-xl disabled:opacity-50 font-medium transition-all"
                     >
                       {isCreating ? "Creating..." : "Create"}
                     </button>
@@ -210,30 +199,30 @@ const DashboardPage = ({ socket }) => {
           )}
         </AnimatePresence>
 
-        {/* Chatrooms Grid */}
         {filteredChatrooms.length === 0 ? (
-          <div className="text-center py-12">
-            <ChatBubbleLeftRightIcon className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">
+          <div className="text-center py-20">
+            <div className="w-20 h-20 bg-gray-800 rounded-full flex items-center justify-center mx-auto mb-6">
+              <ChatBubbleLeftRightIcon className="w-10 h-10 text-gray-600" />
+            </div>
+            <h3 className="text-lg font-medium text-white mb-2">
               {searchTerm ? "No chatrooms found" : "No chatrooms yet"}
             </h3>
-            <p className="text-gray-600 mb-6">
-              {searchTerm 
-                ? "Try adjusting your search terms" 
-                : "Be the first to create a chatroom!"
-              }
+            <p className="text-gray-400 mb-6">
+              {searchTerm
+                ? "Try adjusting your search terms"
+                : "Be the first to create a chatroom!"}
             </p>
             {!searchTerm && (
               <button
                 onClick={() => setShowCreateForm(true)}
-                className="btn-primary"
+                className="bg-gradient-to-r from-primary-500 to-secondary-500 text-white px-6 py-2.5 rounded-xl font-medium shadow-lg shadow-primary-500/25"
               >
                 Create First Chatroom
               </button>
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
             <AnimatePresence>
               {filteredChatrooms.map((chatroom, index) => (
                 <motion.div
@@ -241,32 +230,39 @@ const DashboardPage = ({ socket }) => {
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -20 }}
-                  transition={{ delay: index * 0.1 }}
-                  className="card p-6 hover:shadow-lg transition-shadow duration-200"
+                  transition={{ delay: index * 0.05 }}
                 >
-                  <div className="flex items-start justify-between mb-4">
-                    <div className="flex-1">
-                      <h3 className="text-lg font-semibold text-gray-900 mb-1">
-                        {chatroom.name}
-                      </h3>
-                      <div className="flex items-center text-sm text-gray-500 space-x-4">
+                  <Link
+                    to={`/chatroom/${chatroom._id}`}
+                    className="block bg-gray-800/50 backdrop-blur-sm border border-gray-700/50 rounded-2xl p-6 hover:border-primary-500/50 hover:bg-gray-800/80 transition-all duration-300 group"
+                  >
+                    <div className="flex items-start justify-between mb-4">
+                      <div
+                        className={`w-12 h-12 rounded-xl bg-gradient-to-r ${chatroomColors[index % chatroomColors.length]} flex items-center justify-center shadow-lg`}
+                      >
+                        <span className="text-xl font-bold text-white">
+                          {chatroom.name.charAt(0).toUpperCase()}
+                        </span>
+                      </div>
+                      <ArrowRightIcon className="w-5 h-5 text-gray-600 group-hover:text-primary-400 transition-colors" />
+                    </div>
+                    <h3 className="text-lg font-semibold text-white mb-2 group-hover:text-primary-400 transition-colors">
+                      {chatroom.name}
+                    </h3>
+                    <div className="flex items-center gap-4 text-sm text-gray-500">
+                      {chatroom.createdBy && (
                         <div className="flex items-center space-x-1">
-                          <UsersIcon className="w-4 h-4" />
-                          <span>{chatroom.users?.length || 0} members</span>
+                          <UserCircleIcon className="w-4 h-4" />
+                          <span>{chatroom.createdBy.name || "Unknown"}</span>
                         </div>
+                      )}
+                      {chatroom.createdAt && (
                         <div className="flex items-center space-x-1">
                           <ClockIcon className="w-4 h-4" />
                           <span>{formatDate(chatroom.createdAt)}</span>
                         </div>
-                      </div>
+                      )}
                     </div>
-                  </div>
-                  
-                  <Link
-                    to={`/chatroom/${chatroom._id}`}
-                    className="btn-primary w-full text-center"
-                  >
-                    Join Chatroom
                   </Link>
                 </motion.div>
               ))}

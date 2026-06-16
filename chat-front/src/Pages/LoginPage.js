@@ -1,30 +1,24 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { 
-  EnvelopeIcon, 
-  LockClosedIcon, 
-  EyeIcon, 
+import {
+  EnvelopeIcon,
+  LockClosedIcon,
+  EyeIcon,
   EyeSlashIcon,
-  ChatBubbleLeftRightIcon
+  ChatBubbleLeftRightIcon,
 } from "@heroicons/react/24/outline";
 import makeToast from "../Toaster";
-import axios from "axios";
+import api from "../services/api";
 
 const LoginPage = ({ setupSocket, setUser }) => {
-  const [formData, setFormData] = useState({
-    email: "",
-    password: "",
-  });
+  const [formData, setFormData] = useState({ email: "", password: "" });
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
 
   const handleChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    });
+    setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
   const loginUser = async (e) => {
@@ -32,71 +26,63 @@ const LoginPage = ({ setupSocket, setUser }) => {
     setIsLoading(true);
 
     try {
-      const response = await axios.post(
-        "https://cipherchat-messenger.onrender.com/user/login",
-        formData
-      );
+      const response = await api.post("/user/login", formData);
       makeToast("success", response.data.message);
       localStorage.setItem("CC_Token", response.data.token);
-      localStorage.setItem("CC_User", JSON.stringify(response.data.user)); // save user info
-      if (setUser) setUser(response.data.user); // update app state
-      if (setupSocket) {
-        setupSocket();
-      }
+      localStorage.setItem("CC_User", JSON.stringify(response.data.user));
+      if (setUser) setUser(response.data.user);
+      if (setupSocket) setupSocket();
       navigate("/dashboard");
     } catch (err) {
-      if (err?.response?.data?.message) {
-        makeToast("error", err.response.data.message);
-      } else {
-        makeToast("error", "An error occurred. Please try again.");
-      }
+      makeToast(
+        "error",
+        err?.response?.data?.message || "An error occurred. Please try again."
+      );
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary-50 via-white to-secondary-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-primary-900/40 to-secondary-900/40 flex items-center justify-center p-4 relative overflow-hidden">
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-40 -left-40 w-80 h-80 bg-primary-500/10 rounded-full blur-3xl" />
+        <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-secondary-500/10 rounded-full blur-3xl" />
+      </div>
+
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
-        className="w-full max-w-md"
+        className="w-full max-w-md relative z-10"
       >
-        {/* Logo and Title */}
         <div className="text-center mb-8">
           <motion.div
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
             transition={{ delay: 0.2, type: "spring", stiffness: 200 }}
-            className="w-16 h-16 bg-gradient-to-r from-primary-600 to-secondary-600 rounded-2xl flex items-center justify-center mx-auto mb-4"
+            className="w-16 h-16 bg-gradient-to-r from-primary-500 to-secondary-500 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-primary-500/25"
           >
             <ChatBubbleLeftRightIcon className="w-8 h-8 text-white" />
           </motion.div>
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">
-            Welcome Back
-          </h1>
-          <p className="text-gray-600">
-            Sign in to your CipherChat account
-          </p>
+          <h1 className="text-3xl font-bold text-white mb-2">Welcome Back</h1>
+          <p className="text-gray-400">Sign in to your CipherChat account</p>
         </div>
 
-        {/* Login Form */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3, duration: 0.5 }}
-          className="card p-8"
+          className="bg-gray-800/50 backdrop-blur-xl rounded-2xl p-8 border border-gray-700/50 shadow-2xl"
         >
           <form onSubmit={loginUser} className="space-y-6">
-            {/* Email Field */}
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="email" className="block text-sm font-medium text-gray-300 mb-2">
                 Email Address
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <EnvelopeIcon className="h-5 w-5 text-gray-400" />
+                  <EnvelopeIcon className="h-5 w-5 text-gray-500" />
                 </div>
                 <input
                   type="email"
@@ -104,21 +90,20 @@ const LoginPage = ({ setupSocket, setUser }) => {
                   id="email"
                   value={formData.email}
                   onChange={handleChange}
-                  className="input-field pl-10"
+                  className="w-full bg-gray-700/50 border border-gray-600 text-white rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent placeholder-gray-500 transition-all"
                   placeholder="Enter your email"
                   required
                 />
               </div>
             </div>
 
-            {/* Password Field */}
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="password" className="block text-sm font-medium text-gray-300 mb-2">
                 Password
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <LockClosedIcon className="h-5 w-5 text-gray-400" />
+                  <LockClosedIcon className="h-5 w-5 text-gray-500" />
                 </div>
                 <input
                   type={showPassword ? "text" : "password"}
@@ -126,7 +111,7 @@ const LoginPage = ({ setupSocket, setUser }) => {
                   id="password"
                   value={formData.password}
                   onChange={handleChange}
-                  className="input-field pl-10 pr-10"
+                  className="w-full bg-gray-700/50 border border-gray-600 text-white rounded-xl pl-10 pr-12 py-3 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent placeholder-gray-500 transition-all"
                   placeholder="Enter your password"
                   required
                 />
@@ -136,27 +121,22 @@ const LoginPage = ({ setupSocket, setUser }) => {
                   onClick={() => setShowPassword(!showPassword)}
                 >
                   {showPassword ? (
-                    <EyeSlashIcon className="h-5 w-5 text-gray-400 hover:text-gray-600" />
+                    <EyeSlashIcon className="h-5 w-5 text-gray-400 hover:text-gray-300" />
                   ) : (
-                    <EyeIcon className="h-5 w-5 text-gray-400 hover:text-gray-600" />
+                    <EyeIcon className="h-5 w-5 text-gray-400 hover:text-gray-300" />
                   )}
                 </button>
               </div>
             </div>
 
-            {/* Submit Button */}
             <button
               type="submit"
               disabled={isLoading}
-              className="btn-primary w-full py-3 text-base font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full bg-gradient-to-r from-primary-500 to-secondary-500 hover:from-primary-600 hover:to-secondary-600 text-white font-semibold py-3 rounded-xl transition-all duration-200 shadow-lg shadow-primary-500/25 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isLoading ? (
                 <div className="flex items-center justify-center space-x-2">
-                  <div className="loading-dots">
-                    <div></div>
-                    <div></div>
-                    <div></div>
-                  </div>
+                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                   <span>Signing in...</span>
                 </div>
               ) : (
@@ -165,28 +145,25 @@ const LoginPage = ({ setupSocket, setUser }) => {
             </button>
           </form>
 
-          {/* Divider */}
           <div className="my-6">
             <div className="relative">
               <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-gray-300" />
+                <div className="w-full border-t border-gray-600/50" />
               </div>
               <div className="relative flex justify-center text-sm">
-                <span className="px-2 bg-white text-gray-500">New to CipherChat?</span>
+                <span className="px-3 bg-gray-800/50 text-gray-400">New to CipherChat?</span>
               </div>
             </div>
           </div>
 
-          {/* Sign Up Link */}
           <Link
             to="/register"
-            className="btn-outline w-full py-3 text-base font-medium text-center"
+            className="block w-full text-center py-3 rounded-xl border border-gray-600 text-gray-300 hover:text-white hover:border-primary-500 hover:bg-primary-500/10 transition-all duration-200 font-medium"
           >
             Create an Account
           </Link>
         </motion.div>
 
-        {/* Footer */}
         <motion.p
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}

@@ -1,17 +1,17 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { 
+import {
   UserIcon,
-  EnvelopeIcon, 
-  LockClosedIcon, 
-  EyeIcon, 
+  EnvelopeIcon,
+  LockClosedIcon,
+  EyeIcon,
   EyeSlashIcon,
   ChatBubbleLeftRightIcon,
-  CameraIcon
+  CameraIcon,
 } from "@heroicons/react/24/outline";
 import makeToast from "../Toaster";
-import axios from "axios";
+import api from "../services/api";
 
 const RegisterPage = () => {
   const [formData, setFormData] = useState({
@@ -20,27 +20,27 @@ const RegisterPage = () => {
     password: "",
     confirmPassword: "",
   });
-  const [dp, setDp] = useState(null); // base64 string
-  const [dpPreview, setDpPreview] = useState(null); // preview URL
+  const [dp, setDp] = useState(null);
+  const [dpPreview, setDpPreview] = useState(null);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
 
   const handleChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    });
+    setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  // Handle DP upload and preview
   const handleDpChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      makeToast("error", "Image must be less than 2MB");
+      return;
+    }
     const reader = new FileReader();
     reader.onloadend = () => {
-      setDp(reader.result); // base64 string
+      setDp(reader.result);
       setDpPreview(reader.result);
     };
     reader.readAsDataURL(file);
@@ -48,85 +48,75 @@ const RegisterPage = () => {
 
   const registerUser = async (e) => {
     e.preventDefault();
-    
+
     if (formData.password !== formData.confirmPassword) {
       makeToast("error", "Passwords do not match");
       return;
     }
-
     if (formData.password.length < 6) {
       makeToast("error", "Password must be at least 6 characters long");
       return;
     }
 
     setIsLoading(true);
-
     try {
-      const response = await axios.post(
-        "https://cipherchat-messenger.onrender.com/user/register",
-        {
-          name: formData.username,
-          email: formData.email,
-          password: formData.password,
-          dp, // send base64 string as 'dp'
-        }
-      );
-      
+      const response = await api.post("/user/register", {
+        name: formData.username,
+        email: formData.email,
+        password: formData.password,
+        dp,
+      });
       makeToast("success", response.data.message);
-      navigate("/login");
+      // Auto-login: store token and user, then go straight to dashboard
+      localStorage.setItem("CC_Token", response.data.token);
+      localStorage.setItem("CC_User", JSON.stringify(response.data.user));
+      navigate("/");
     } catch (err) {
-      // Log the error for debugging
-      console.error("Registration error:", err);
-      // Show the actual backend error message if available
-      if (err?.response?.data?.message) {
-        makeToast("error", err.response.data.message);
-      } else if (err?.response?.data) {
-        makeToast("error", JSON.stringify(err.response.data));
-      } else if (err?.message) {
-        makeToast("error", err.message);
-      } else {
-        makeToast("error", "An unknown error occurred. Please try again.");
-      }
+      makeToast(
+        "error",
+        err?.response?.data?.message || "An error occurred. Please try again."
+      );
     } finally {
       setIsLoading(false);
     }
   };
 
+  const inputClasses =
+    "w-full bg-gray-700/50 border border-gray-600 text-white rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent placeholder-gray-500 transition-all";
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary-50 via-white to-secondary-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-primary-900/40 to-secondary-900/40 flex items-center justify-center p-4 relative overflow-hidden">
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-secondary-500/10 rounded-full blur-3xl" />
+        <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-primary-500/10 rounded-full blur-3xl" />
+      </div>
+
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
-        className="w-full max-w-md"
+        className="w-full max-w-md relative z-10"
       >
-        {/* Logo and Title */}
         <div className="text-center mb-8">
           <motion.div
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
             transition={{ delay: 0.2, type: "spring", stiffness: 200 }}
-            className="w-16 h-16 bg-gradient-to-r from-primary-600 to-secondary-600 rounded-2xl flex items-center justify-center mx-auto mb-4"
+            className="w-16 h-16 bg-gradient-to-r from-primary-500 to-secondary-500 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-primary-500/25"
           >
             <ChatBubbleLeftRightIcon className="w-8 h-8 text-white" />
           </motion.div>
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">
-            Join CipherChat
-          </h1>
-          <p className="text-gray-600">
-            Create your account and start chatting securely
-          </p>
+          <h1 className="text-3xl font-bold text-white mb-2">Join CipherChat</h1>
+          <p className="text-gray-400">Create your account and start chatting securely</p>
         </div>
 
-        {/* Register Form */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3, duration: 0.5 }}
-          className="card p-8"
+          className="bg-gray-800/50 backdrop-blur-xl rounded-2xl p-8 border border-gray-700/50 shadow-2xl"
         >
-          <form onSubmit={registerUser} className="space-y-6">
-            {/* DP Upload */}
+          <form onSubmit={registerUser} className="space-y-5">
             <div className="flex flex-col items-center mb-2">
               <label className="relative cursor-pointer group">
                 {dpPreview ? (
@@ -136,12 +126,12 @@ const RegisterPage = () => {
                     className="w-20 h-20 rounded-full object-cover border-2 border-primary-400 shadow-lg"
                   />
                 ) : (
-                  <span className="w-20 h-20 rounded-full bg-gradient-to-br from-primary-200 to-secondary-200 flex items-center justify-center text-4xl text-white shadow-lg">
-                    <UserIcon className="w-10 h-10" />
+                  <span className="w-20 h-20 rounded-full bg-gradient-to-br from-gray-600 to-gray-700 flex items-center justify-center shadow-lg border-2 border-gray-600">
+                    <UserIcon className="w-10 h-10 text-gray-400" />
                   </span>
                 )}
-                <span className="absolute bottom-0 right-0 bg-primary-600 p-2 rounded-full shadow-lg border-2 border-white group-hover:bg-secondary-600 transition-colors duration-200">
-                  <CameraIcon className="w-5 h-5 text-white" />
+                <span className="absolute bottom-0 right-0 bg-primary-500 p-2 rounded-full shadow-lg border-2 border-gray-800 group-hover:bg-secondary-500 transition-colors duration-200">
+                  <CameraIcon className="w-4 h-4 text-white" />
                 </span>
                 <input
                   type="file"
@@ -150,17 +140,18 @@ const RegisterPage = () => {
                   onChange={handleDpChange}
                 />
               </label>
-              <span className="text-xs text-gray-500 mt-2">Add a profile picture (optional)</span>
+              <span className="text-xs text-gray-500 mt-2">
+                Add a profile picture (optional, max 2MB)
+              </span>
             </div>
 
-            {/* Username Field */}
             <div>
-              <label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="username" className="block text-sm font-medium text-gray-300 mb-2">
                 Username
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <UserIcon className="h-5 w-5 text-gray-400" />
+                  <UserIcon className="h-5 w-5 text-gray-500" />
                 </div>
                 <input
                   type="text"
@@ -168,21 +159,20 @@ const RegisterPage = () => {
                   id="username"
                   value={formData.username}
                   onChange={handleChange}
-                  className="input-field pl-10"
+                  className={inputClasses}
                   placeholder="Choose a username"
                   required
                 />
               </div>
             </div>
 
-            {/* Email Field */}
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="email" className="block text-sm font-medium text-gray-300 mb-2">
                 Email Address
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <EnvelopeIcon className="h-5 w-5 text-gray-400" />
+                  <EnvelopeIcon className="h-5 w-5 text-gray-500" />
                 </div>
                 <input
                   type="email"
@@ -190,21 +180,20 @@ const RegisterPage = () => {
                   id="email"
                   value={formData.email}
                   onChange={handleChange}
-                  className="input-field pl-10"
+                  className={inputClasses}
                   placeholder="Enter your email"
                   required
                 />
               </div>
             </div>
 
-            {/* Password Field */}
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="password" className="block text-sm font-medium text-gray-300 mb-2">
                 Password
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <LockClosedIcon className="h-5 w-5 text-gray-400" />
+                  <LockClosedIcon className="h-5 w-5 text-gray-500" />
                 </div>
                 <input
                   type={showPassword ? "text" : "password"}
@@ -212,8 +201,8 @@ const RegisterPage = () => {
                   id="password"
                   value={formData.password}
                   onChange={handleChange}
-                  className="input-field pl-10 pr-10"
-                  placeholder="Create a password"
+                  className={`${inputClasses} pr-12`}
+                  placeholder="Create a password (min 6 characters)"
                   required
                 />
                 <button
@@ -222,25 +211,21 @@ const RegisterPage = () => {
                   onClick={() => setShowPassword(!showPassword)}
                 >
                   {showPassword ? (
-                    <EyeSlashIcon className="h-5 w-5 text-gray-400 hover:text-gray-600" />
+                    <EyeSlashIcon className="h-5 w-5 text-gray-400 hover:text-gray-300" />
                   ) : (
-                    <EyeIcon className="h-5 w-5 text-gray-400 hover:text-gray-600" />
+                    <EyeIcon className="h-5 w-5 text-gray-400 hover:text-gray-300" />
                   )}
                 </button>
               </div>
-              <p className="text-xs text-gray-500 mt-1">
-                Must be at least 6 characters long
-              </p>
             </div>
 
-            {/* Confirm Password Field */}
             <div>
-              <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-300 mb-2">
                 Confirm Password
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <LockClosedIcon className="h-5 w-5 text-gray-400" />
+                  <LockClosedIcon className="h-5 w-5 text-gray-500" />
                 </div>
                 <input
                   type={showConfirmPassword ? "text" : "password"}
@@ -248,7 +233,7 @@ const RegisterPage = () => {
                   id="confirmPassword"
                   value={formData.confirmPassword}
                   onChange={handleChange}
-                  className="input-field pl-10 pr-10"
+                  className={`${inputClasses} pr-12`}
                   placeholder="Confirm your password"
                   required
                 />
@@ -258,27 +243,22 @@ const RegisterPage = () => {
                   onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                 >
                   {showConfirmPassword ? (
-                    <EyeSlashIcon className="h-5 w-5 text-gray-400 hover:text-gray-600" />
+                    <EyeSlashIcon className="h-5 w-5 text-gray-400 hover:text-gray-300" />
                   ) : (
-                    <EyeIcon className="h-5 w-5 text-gray-400 hover:text-gray-600" />
+                    <EyeIcon className="h-5 w-5 text-gray-400 hover:text-gray-300" />
                   )}
                 </button>
               </div>
             </div>
 
-            {/* Submit Button */}
             <button
               type="submit"
               disabled={isLoading}
-              className="btn-primary w-full py-3 text-base font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full bg-gradient-to-r from-primary-500 to-secondary-500 hover:from-primary-600 hover:to-secondary-600 text-white font-semibold py-3 rounded-xl transition-all duration-200 shadow-lg shadow-primary-500/25 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isLoading ? (
                 <div className="flex items-center justify-center space-x-2">
-                  <div className="loading-dots">
-                    <div></div>
-                    <div></div>
-                    <div></div>
-                  </div>
+                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                   <span>Creating account...</span>
                 </div>
               ) : (
@@ -287,28 +267,25 @@ const RegisterPage = () => {
             </button>
           </form>
 
-          {/* Divider */}
           <div className="my-6">
             <div className="relative">
               <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-gray-300" />
+                <div className="w-full border-t border-gray-600/50" />
               </div>
               <div className="relative flex justify-center text-sm">
-                <span className="px-2 bg-white text-gray-500">Already have an account?</span>
+                <span className="px-3 bg-gray-800/50 text-gray-400">Already have an account?</span>
               </div>
             </div>
           </div>
 
-          {/* Sign In Link */}
           <Link
             to="/login"
-            className="btn-outline w-full py-3 text-base font-medium text-center"
+            className="block w-full text-center py-3 rounded-xl border border-gray-600 text-gray-300 hover:text-white hover:border-primary-500 hover:bg-primary-500/10 transition-all duration-200 font-medium"
           >
             Sign In
           </Link>
         </motion.div>
 
-        {/* Footer */}
         <motion.p
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
