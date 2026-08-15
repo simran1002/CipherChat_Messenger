@@ -7,11 +7,11 @@ let app, token, chatroomId;
 
 beforeAll(async () => {
   await mongoose.connect(process.env.DATABASE);
-  require("../models/User");
-  require("../models/Chatroom");
-  require("../models/Message");
-  require("../models/DirectMessage");
-  app = require("../app");
+  require("../dist/models/User");
+  require("../dist/models/Chatroom");
+  require("../dist/models/Message");
+  require("../dist/models/DirectMessage");
+  app = require("../dist/app").default;
 
   await request(app).post("/user/register").send({
     name: "Room Tester",
@@ -64,7 +64,7 @@ describe("POST /chatroom", () => {
       .post("/chatroom")
       .set("Authorization", `Bearer ${token}`)
       .send({ name: "TestRoom-Jest" });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(409);
   });
 
   it("rejects invalid characters in name", async () => {

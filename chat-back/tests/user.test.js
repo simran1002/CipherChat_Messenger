@@ -7,11 +7,11 @@ let app;
 
 beforeAll(async () => {
   await mongoose.connect(process.env.DATABASE);
-  require("../models/User");
-  require("../models/Chatroom");
-  require("../models/Message");
-  require("../models/DirectMessage");
-  app = require("../app");
+  require("../dist/models/User");
+  require("../dist/models/Chatroom");
+  require("../dist/models/Message");
+  require("../dist/models/DirectMessage");
+  app = require("../dist/app").default;
 });
 
 afterAll(async () => {
@@ -35,7 +35,7 @@ describe("POST /user/register", () => {
 
   it("rejects duplicate email", async () => {
     const res = await request(app).post("/user/register").send(testUser);
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(409);
     expect(res.body.message).toMatch(/already exists/i);
   });
 
@@ -76,7 +76,7 @@ describe("POST /user/login", () => {
       email: testUser.email,
       password: "wrongpassword",
     });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(401);
   });
 
   it("rejects unknown email", async () => {
@@ -84,7 +84,7 @@ describe("POST /user/login", () => {
       email: "nobody@test.cipher",
       password: "password123",
     });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(401);
   });
 
   it("rejects missing credentials", async () => {
