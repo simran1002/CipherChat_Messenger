@@ -95,10 +95,36 @@ export interface SyncResultItem {
   error?: string;
 }
 
+/** E2EE envelope — mirrors chat-back DmEnvelope. */
+export interface DmEnvelope {
+  v: number;
+  sessionId: string;
+  ctr: number;
+  ct: string;
+  init?: { ephPub: string; ik: string; spkId: number };
+}
+
+export interface DirectMessagePayload {
+  conversationId: string;
+  clientMessageId?: string;
+  message?: string;
+  envelope?: DmEnvelope;
+}
+
+export interface DmMessageAck {
+  ok: boolean;
+  messageId?: string;
+  duplicate?: boolean;
+  error?: "invalid_message" | "not_participant" | "replayed_counter" | "server_error";
+}
+
 export interface NewDirectMessagePayload {
   conversationId: string;
   _id: string;
-  message: string;
+  type: "e2ee/v1" | "plaintext-legacy";
+  message?: string;
+  envelope?: DmEnvelope;
+  clientMessageId?: string | null;
   userId: string;
   name: string;
   dp: string;
@@ -123,7 +149,7 @@ export interface ClientToServerEvents {
   stopTyping: (p: { chatroomId: string }) => void;
   joinDM: (p: { conversationId: string }) => void;
   leaveDM: (p: { conversationId: string }) => void;
-  directMessage: (p: { conversationId: string; message: string }) => void;
+  directMessage: (p: DirectMessagePayload, ack?: (a: DmMessageAck) => void) => void;
   dmTyping: (p: { conversationId: string }) => void;
   dmStopTyping: (p: { conversationId: string }) => void;
   syncOfflineQueue: (p: { messages: OfflineQueueItem[] }, ack?: () => void) => void;

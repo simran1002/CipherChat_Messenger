@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import { Message } from "../models/Message.js";
 import { User } from "../models/User.js";
 import { dedup, metrics, presenceRegistry, rateLimiter, seqCounter, typingMgr } from "../shared/index.js";
+import { messageLatency, messagesTotal } from "../shared/prometheus.js";
 import { errMessage, logger } from "../utils/logger.js";
 import type { AppServer, AppSocket, ChatroomMessagePayload, NewMessagePayload } from "./events.js";
 
@@ -27,6 +28,7 @@ export function registerRoomHandlers(io: AppServer, socket: AppSocket): void {
     // Token-bucket rate limit
     if (!(await rateLimiter.allow(userId))) {
       metrics.recordRateLimit();
+      messagesTotal.inc({ outcome: "rate_limited" });
       const err = { error: "rate_limited" as const, message: "Slow down — too many messages." };
       if (typeof ackFn === "function") ackFn({ ok: false, ...err });
       else socket.emit("messageError", err);
@@ -38,6 +40,7 @@ export function registerRoomHandlers(io: AppServer, socket: AppSocket): void {
       const existing = await dedup.check(clientMessageId);
       if (existing) {
         metrics.recordDuplicate();
+        messagesTotal.inc({ outcome: "duplicate" });
         if (typeof ackFn === "function") ackFn({ ok: true, messageId: existing, duplicate: true });
         return;
       }
@@ -83,6 +86,8 @@ export function registerRoomHandlers(io: AppServer, socket: AppSocket): void {
 
       metrics.recordSent();
       metrics.recordLatency(Date.now() - sendTs);
+      messagesTotal.inc({ outcome: "sent" });
+      messageLatency.observe(Date.now() - sendTs);
 
       const payload: NewMessagePayload = {
         _id: newMessage._id.toString(),
@@ -110,6 +115,7 @@ export function registerRoomHandlers(io: AppServer, socket: AppSocket): void {
       metrics.recordDelivered();
     } catch (err) {
       metrics.recordFailed();
+      messagesTotal.inc({ outcome: "failed" });
       logger.error("Error sending message", { error: errMessage(err) });
       if (typeof ackFn === "function") ackFn({ ok: false, error: "server_error" });
       else socket.emit("messageError", { message: "Failed to send message" });

@@ -6,13 +6,27 @@ import {
   PaperAirplaneIcon,
   ArrowLeftIcon,
   MagnifyingGlassIcon,
+  LockClosedIcon,
+  ShieldCheckIcon,
 } from "@heroicons/react/24/outline";
 import { makeToast } from "../utils/toast";
 import api from "../services/api";
+import e2eeService from "../services/E2EEService";
+import { useE2EE, isNoKeysError } from "../hooks/useE2EE";
+import E2EESetupGate from "../components/E2EESetupGate";
+import SafetyNumberModal from "../components/SafetyNumberModal";
 import { getCurrentUserId } from "../hooks/useCurrentUser";
 import { stringToColor, getInitials, formatTime, formatDateDivider } from "../utils/helpers";
 import type { AppSocket, AuthUser, DmConversation, DmMessage } from "../types";
-import type { NewDirectMessagePayload } from "../types/socket";
+import type {
+  DirectMessagePayload,
+  DmEnvelope,
+  DmMessageAck,
+  NewDirectMessagePayload,
+} from "../types/socket";
+// Type-only import: DmEnvelope (wire type, v: number) narrows to WireEnvelope (v: 1)
+// for e2eeService.decrypt — same runtime shape, see the casts below.
+import type { WireEnvelope } from "../crypto/envelope";
 
 interface AvatarUser {
   name?: string;
@@ -30,10 +44,25 @@ interface DmUser {
   dp?: string;
 }
 
+/** Raw row from GET /dm/:id/messages (pre-decrypt). */
+interface RawDmRow {
+  _id: string;
+  type?: "e2ee/v1" | "plaintext-legacy";
+  message?: string;
+  envelope?: DmEnvelope;
+  clientMessageId?: string | null;
+  edited?: boolean;
+  userId: string;
+  user?: { _id: string; name?: string; dp?: string } | null;
+  createdAt: string;
+}
+
 interface TypingUser {
   userId: string;
   name?: string;
 }
+
+const ENCRYPTED_PLACEHOLDER = "🔒 Encrypted message";
 
 const Avatar = ({ user, size = "w-10 h-10" }: { user: AvatarUser | null | undefined; size?: string }) => {
   if (user?.dp) {
@@ -67,6 +96,10 @@ const DirectMessagesPage = ({ socket }: DirectMessagesPageProps) => {
   const [userSearch, setUserSearch] = useState("");
   const [typingUsers, setTypingUsers] = useState<TypingUser[]>([]);
   const [currentUserId, setCurrentUserId] = useState("");
+  const [keyChangedConvs, setKeyChangedConvs] = useState<Set<string>>(new Set());
+  const [showSafetyModal, setShowSafetyModal] = useState(false);
+
+  const { status: e2eeStatus, refresh: refreshE2EE } = useE2EE();
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -81,7 +114,23 @@ const DirectMessagesPage = ({ socket }: DirectMessagesPageProps) => {
     try {
       setIsLoadingConvs(true);
       const res = await api.get("/dm");
-      setConversations(res.data as DmConversation[]);
+      const rows = res.data as DmConversation[];
+      // Substitute locally cached decrypted previews for "🔒 Encrypted message"
+      const withPreviews = await Promise.all(
+        rows.map(async (conv) => {
+          if (!conv.lastMessage?.encrypted) return conv;
+          try {
+            const preview = await e2eeService.getPreview(conv._id);
+            if (preview) {
+              return { ...conv, lastMessage: { ...conv.lastMessage, message: preview } };
+            }
+          } catch {
+            // keep the server placeholder
+          }
+          return conv;
+        })
+      );
+      setConversations(withPreviews);
     } catch {
       makeToast("error", "Failed to load conversations");
     } finally {
@@ -91,13 +140,60 @@ const DirectMessagesPage = ({ socket }: DirectMessagesPageProps) => {
 
   useEffect(() => { loadConversations(); }, [loadConversations]);
 
+  /** Update a sidebar row's preview + bump its recency. */
+  const updateConvPreview = useCallback(
+    (conversationId: string, message: string, encrypted: boolean, createdAt: string) => {
+      setConversations((prev) =>
+        prev.map((c) =>
+          c._id === conversationId
+            ? { ...c, lastMessage: { message, encrypted, createdAt }, lastMessageAt: createdAt }
+            : c
+        )
+      );
+    },
+    []
+  );
+
   const openConversation = async (conv: ConversationLike) => {
     setActiveConv(conv);
     setMessages([]);
     setIsLoadingMsgs(true);
     try {
       const res = await api.get(`/dm/${conv._id}/messages`);
-      setMessages(res.data.messages as DmMessage[]);
+      const rows = res.data.messages as RawDmRow[];
+      const me = currentUserId || getCurrentUserId() || "";
+      const normalized = await Promise.all(
+        rows.map(async (row): Promise<DmMessage> => {
+          const base = {
+            _id: row._id,
+            type: row.type,
+            clientMessageId: row.clientMessageId,
+            edited: row.edited,
+            userId: row.userId,
+            name: row.user?.name,
+            dp: row.user?.dp,
+            createdAt: row.createdAt,
+          };
+          if (row.type === "e2ee/v1" && row.envelope) {
+            const result = await e2eeService.decrypt(conv._id, row.userId, row.envelope as WireEnvelope, {
+              own: row.userId === me,
+            });
+            return {
+              ...base,
+              message: result.text,
+              envelope: row.envelope,
+              encrypted: true,
+              undecryptable: !result.ok,
+            };
+          }
+          return { ...base, message: row.message ?? "" };
+        })
+      );
+      setMessages(normalized);
+      const last = normalized[normalized.length - 1];
+      if (last?.encrypted && !last.undecryptable) {
+        void e2eeService.cachePreview(conv._id, last.message);
+      }
       setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
     } catch {
       makeToast("error", "Failed to load messages");
@@ -113,6 +209,7 @@ const DirectMessagesPage = ({ socket }: DirectMessagesPageProps) => {
     if (activeConv && socket) socket.emit("leaveDM", { conversationId: activeConv._id });
     setActiveConv(null);
     setMessages([]);
+    setShowSafetyModal(false);
   };
 
   // Socket events for DMs
@@ -120,19 +217,69 @@ const DirectMessagesPage = ({ socket }: DirectMessagesPageProps) => {
     if (!socket) return;
 
     const handleNewDM = (data: NewDirectMessagePayload) => {
-      if (!activeConv || data.conversationId !== activeConv._id) {
-        // Update last message in conversation list
-        setConversations((prev) =>
-          prev.map((c) =>
-            c._id === data.conversationId
-              ? { ...c, lastMessage: { message: data.message, createdAt: data.createdAt } }
-              : c
-          )
-        );
-        return;
-      }
-      setMessages((prev) => [...prev, data]);
-      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+      void (async () => {
+        const me = currentUserId || getCurrentUserId() || "";
+        const own = data.userId === me;
+        let text = data.message ?? "";
+        let encrypted = false;
+        let undecryptable = false;
+
+        if (data.type === "e2ee/v1" && data.envelope) {
+          encrypted = true;
+          const result = await e2eeService.decrypt(
+            data.conversationId,
+            data.userId,
+            data.envelope as WireEnvelope,
+            { own }
+          );
+          text = result.text;
+          undecryptable = !result.ok;
+          if (result.ok) {
+            // This is the latest message in the conversation — cache its preview
+            void e2eeService.cachePreview(data.conversationId, text);
+          }
+          if (result.keyChanged && !own) {
+            setKeyChangedConvs((prev) => {
+              const next = new Set(prev);
+              next.add(data.conversationId);
+              return next;
+            });
+          }
+        }
+
+        const previewText = encrypted && undecryptable ? ENCRYPTED_PLACEHOLDER : text;
+        updateConvPreview(data.conversationId, previewText, encrypted, data.createdAt);
+
+        if (!activeConv || data.conversationId !== activeConv._id) return;
+
+        const msg: DmMessage = {
+          _id: data._id,
+          type: data.type,
+          message: text,
+          envelope: data.envelope,
+          clientMessageId: data.clientMessageId,
+          encrypted,
+          undecryptable,
+          userId: data.userId,
+          name: data.name,
+          dp: data.dp,
+          createdAt: data.createdAt,
+        };
+        setMessages((prev) => {
+          // Idempotent: never append a duplicate _id
+          if (prev.some((m) => m._id === data._id && !m._pending)) return prev;
+          const pendingIdx = data.clientMessageId
+            ? prev.findIndex((m) => m.clientMessageId === data.clientMessageId)
+            : -1;
+          if (pendingIdx >= 0) {
+            const copy = [...prev];
+            copy[pendingIdx] = msg;
+            return copy;
+          }
+          return [...prev, msg];
+        });
+        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+      })();
     };
 
     const handleDmTyping = (data: { userId: string; name?: string }) => {
@@ -159,18 +306,98 @@ const DirectMessagesPage = ({ socket }: DirectMessagesPageProps) => {
       socket.off("dmUserTyping", handleDmTyping);
       socket.off("dmUserStopTyping", handleDmStopTyping);
     };
-  }, [socket, activeConv]);
+  }, [socket, activeConv, currentUserId, updateConvPreview]);
 
-  const sendMessage = (e: FormEvent<HTMLFormElement>) => {
+  /** Emit with a 5s ack timeout; reconcile or drop the optimistic bubble. */
+  const emitDirectMessage = (payload: DirectMessagePayload, clientMessageId: string) => {
+    if (!socket) return;
+    // The event map declares the plain ack signature; socket.timeout() calls the
+    // callback as (err, ack) at runtime, so adapt the type here.
+    const onAck = (err: Error | null, ack?: DmMessageAck) => {
+      if (err || !ack?.ok || !ack.messageId) {
+        makeToast("error", "Message failed to send");
+        setMessages((prev) => prev.filter((m) => !(m._pending && m.clientMessageId === clientMessageId)));
+        return;
+      }
+      const messageId = ack.messageId;
+      setMessages((prev) => {
+        // newDirectMessage may have landed first and already carries the real _id
+        if (prev.some((m) => m._id === messageId && !m._pending)) {
+          return prev.filter((m) => !(m._pending && m.clientMessageId === clientMessageId));
+        }
+        return prev.map((m) =>
+          m._pending && m.clientMessageId === clientMessageId
+            ? { ...m, _id: messageId, _pending: undefined }
+            : m
+        );
+      });
+    };
+    socket
+      .timeout(5000)
+      .emit("directMessage", payload, onAck as unknown as (a: DmMessageAck) => void);
+  };
+
+  const sendMessage = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!newMessage.trim() || !socket || !activeConv) return;
-    socket.emit("directMessage", { conversationId: activeConv._id, message: newMessage.trim() });
+    const text = newMessage.trim();
+    if (!text || !socket || !activeConv) return;
+
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = null;
       socket.emit("dmStopTyping", { conversationId: activeConv._id });
     }
     setNewMessage("");
     inputRef.current?.focus();
+
+    const conversationId = activeConv._id;
+    const peerId = activeConv.participant?._id;
+    const clientMessageId = crypto.randomUUID();
+    const useEncryption = e2eeStatus.state === "ready" && !!peerId;
+
+    const optimistic: DmMessage = {
+      _id: `pending-${clientMessageId}`,
+      type: useEncryption ? "e2ee/v1" : "plaintext-legacy",
+      message: text,
+      clientMessageId,
+      encrypted: useEncryption,
+      userId: currentUserId || getCurrentUserId() || "",
+      createdAt: new Date().toISOString(),
+      _pending: true,
+    };
+    setMessages((prev) => [...prev, optimistic]);
+    setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+
+    if (!useEncryption) {
+      // E2EE unavailable — degrade to legacy plaintext send
+      emitDirectMessage({ conversationId, clientMessageId, message: text }, clientMessageId);
+      updateConvPreview(conversationId, text, false, optimistic.createdAt);
+      return;
+    }
+
+    try {
+      const envelope = await e2eeService.encrypt(conversationId, peerId, text);
+      emitDirectMessage({ conversationId, clientMessageId, envelope }, clientMessageId);
+      void e2eeService.cachePreview(conversationId, text);
+      updateConvPreview(conversationId, text, true, optimistic.createdAt);
+    } catch (err) {
+      if (isNoKeysError(err)) {
+        // Peer never published keys — fall back to legacy plaintext
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.clientMessageId === clientMessageId
+              ? { ...m, type: "plaintext-legacy" as const, encrypted: false }
+              : m
+          )
+        );
+        makeToast("warning", "Sent unencrypted — recipient hasn't enabled encryption yet");
+        emitDirectMessage({ conversationId, clientMessageId, message: text }, clientMessageId);
+        updateConvPreview(conversationId, text, false, optimistic.createdAt);
+      } else {
+        makeToast("error", "Encryption failed");
+        setMessages((prev) => prev.filter((m) => m.clientMessageId !== clientMessageId));
+      }
+    }
   };
 
   const handleTyping = () => {
@@ -216,8 +443,12 @@ const DirectMessagesPage = ({ socket }: DirectMessagesPageProps) => {
     return new Date(messages[index].createdAt).toDateString() !== new Date(messages[index - 1].createdAt).toDateString();
   };
 
-  return (
-    <div className="flex h-[calc(100vh-72px)] bg-gray-900">
+  const e2eeReady = e2eeStatus.state === "ready";
+  const allE2EE = messages.length > 0 && messages.every((m) => m.encrypted);
+  const keyChangedActive = !!activeConv && keyChangedConvs.has(activeConv._id);
+
+  const dmUi = (
+    <div className="flex flex-1 min-h-0 w-full bg-gray-900">
       {/* Conversation List */}
       <aside className={`${activeConv ? "hidden md:flex" : "flex"} w-full md:w-80 flex-col bg-gray-800/60 border-r border-gray-700/50`}>
         <div className="flex items-center justify-between p-4 border-b border-gray-700/50">
@@ -279,10 +510,27 @@ const DirectMessagesPage = ({ socket }: DirectMessagesPageProps) => {
               <ArrowLeftIcon className="w-5 h-5 text-gray-400" />
             </button>
             <Avatar user={activeConv.participant} size="w-9 h-9" />
-            <div>
-              <h2 className="font-semibold text-white">{activeConv.participant?.name}</h2>
-              <p className="text-xs text-gray-500">{activeConv.participant?.email}</p>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h2 className="font-semibold text-white truncate">{activeConv.participant?.name}</h2>
+                {e2eeReady && (
+                  <span className="flex items-center gap-1 text-[10px] font-medium text-green-400 bg-green-500/10 border border-green-500/30 rounded-full px-2 py-0.5 shrink-0">
+                    <LockClosedIcon className="w-3 h-3" /> Encrypted
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-gray-500 truncate">{activeConv.participant?.email}</p>
             </div>
+            {e2eeReady && activeConv.participant && (
+              <button
+                onClick={() => setShowSafetyModal(true)}
+                className="ml-auto p-2 hover:bg-gray-700 rounded-lg transition-colors"
+                aria-label="View safety number"
+                title="View safety number"
+              >
+                <ShieldCheckIcon className="w-5 h-5 text-gray-400" />
+              </button>
+            )}
           </div>
 
           {/* Messages */}
@@ -300,8 +548,17 @@ const DirectMessagesPage = ({ socket }: DirectMessagesPageProps) => {
               </div>
             ) : (
               <>
+                {allE2EE && (
+                  <div className="flex items-center justify-center pb-2">
+                    <p className="text-[11px] text-gray-500">
+                      🔒 Messages in this conversation are end-to-end encrypted
+                    </p>
+                  </div>
+                )}
                 {messages.map((msg, index) => {
                   const isMine = msg.userId === currentUserId;
+                  const showE2EEDivider =
+                    index > 0 && !messages[index - 1].encrypted && !!msg.encrypted;
                   return (
                     <React.Fragment key={msg._id || index}>
                       {shouldShowDateDivider(index) && (
@@ -311,13 +568,22 @@ const DirectMessagesPage = ({ socket }: DirectMessagesPageProps) => {
                           </div>
                         </div>
                       )}
+                      {showE2EEDivider && (
+                        <div className="flex items-center gap-3 my-4">
+                          <div className="flex-1 h-px bg-gray-700/60" />
+                          <span className="text-[11px] text-gray-500 shrink-0">
+                            🔒 Messages below are end-to-end encrypted
+                          </span>
+                          <div className="flex-1 h-px bg-gray-700/60" />
+                        </div>
+                      )}
                       <motion.div
                         initial={{ opacity: 0, y: 8 }}
                         animate={{ opacity: 1, y: 0 }}
                         className={`flex ${isMine ? "justify-end" : "justify-start"} mb-2`}
                       >
-                        <div className={`max-w-[70%] px-4 py-2.5 rounded-2xl text-sm ${isMine ? "bg-gradient-to-r from-primary-500 to-primary-600 text-white rounded-br-md" : "bg-gray-800 text-gray-100 border border-gray-700/50 rounded-bl-md"}`}>
-                          <p className="leading-relaxed">{msg.message}</p>
+                        <div className={`max-w-[70%] px-4 py-2.5 rounded-2xl text-sm ${msg._pending ? "opacity-60" : ""} ${isMine ? "bg-gradient-to-r from-primary-500 to-primary-600 text-white rounded-br-md" : "bg-gray-800 text-gray-100 border border-gray-700/50 rounded-bl-md"}`}>
+                          <p className={`leading-relaxed ${msg.undecryptable ? "italic opacity-80" : ""}`}>{msg.message}</p>
                           <p className={`text-[10px] mt-1 ${isMine ? "text-primary-200" : "text-gray-500"} text-right`}>{formatTime(msg.createdAt)}</p>
                         </div>
                       </motion.div>
@@ -338,6 +604,22 @@ const DirectMessagesPage = ({ socket }: DirectMessagesPageProps) => {
               </>
             )}
           </div>
+
+          {/* Key-change warning */}
+          {keyChangedActive && (
+            <div className="bg-amber-500/10 border-t border-amber-500/30 px-4 py-2.5 flex items-center gap-3 shrink-0">
+              <p className="text-xs text-amber-300 flex-1">
+                ⚠ {activeConv.participant?.name ?? "This contact"}'s safety code changed. Verify
+                before sending sensitive messages.
+              </p>
+              <button
+                onClick={() => setShowSafetyModal(true)}
+                className="text-xs font-medium text-amber-300 border border-amber-500/40 hover:bg-amber-500/20 rounded-lg px-3 py-1 transition-colors shrink-0"
+              >
+                Verify
+              </button>
+            </div>
+          )}
 
           {/* Input */}
           <div className="bg-gray-800/80 backdrop-blur-sm border-t border-gray-700/50 p-3 sm:p-4 shrink-0">
@@ -425,8 +707,45 @@ const DirectMessagesPage = ({ socket }: DirectMessagesPageProps) => {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Safety number modal */}
+      {showSafetyModal && activeConv?.participant && (
+        <SafetyNumberModal
+          peerId={activeConv.participant._id}
+          peerName={activeConv.participant.name}
+          onClose={() => setShowSafetyModal(false)}
+        />
+      )}
     </div>
   );
+
+  if (e2eeStatus.state === "loading") {
+    return (
+      <div className="flex h-[calc(100vh-72px)] bg-gray-900 items-center justify-center">
+        <div className="w-8 h-8 border-4 border-primary-400 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (e2eeStatus.state === "needs-setup" || e2eeStatus.state === "needs-restore-or-reset") {
+    return (
+      <div className="flex h-[calc(100vh-72px)] bg-gray-900">
+        <E2EESetupGate status={e2eeStatus.state} onReady={refreshE2EE} />
+      </div>
+    );
+  }
+
+  if (e2eeStatus.state === "unavailable") {
+    return (
+      <div className="flex flex-col h-[calc(100vh-72px)] bg-gray-900">
+        <E2EESetupGate status="unavailable" reason={e2eeStatus.reason} onReady={refreshE2EE}>
+          {dmUi}
+        </E2EESetupGate>
+      </div>
+    );
+  }
+
+  return <div className="flex h-[calc(100vh-72px)] bg-gray-900">{dmUi}</div>;
 };
 
 export default DirectMessagesPage;

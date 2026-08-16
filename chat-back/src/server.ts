@@ -7,11 +7,13 @@ import "./models/User.js";
 import "./models/Chatroom.js";
 import "./models/Message.js";
 import "./models/DirectMessage.js";
+import "./models/DMMessage.js";
 import "./models/RefreshToken.js";
 
 import app, { allowedOrigins } from "./app.js";
 import { createSocketServer } from "./sockets/index.js";
 import { stopSharedModules } from "./shared/index.js";
+import { closeRedis } from "./config/redis.js";
 
 const MONGO_RETRY_DELAY_MS = 3000;
 const MONGO_MAX_ATTEMPTS = 5;
@@ -68,6 +70,7 @@ async function main(): Promise<void> {
         server.close((err) => (err ? reject(err) : resolve()))
       );
       stopSharedModules();
+      await closeRedis();
       await mongoose.disconnect();
       logger.info("Shutdown complete");
       process.exit(0);

@@ -43,6 +43,32 @@ const userSchema = new Schema(
       enum: PRESENCE_STATUSES,
     },
     presenceNote: { type: String, default: "", maxlength: 80 },
+
+    // ── E2EE key directory ───────────────────────────────────────────────────
+    // Public identity + signed prekey bundle. The server verifies the prekey
+    // signature on publish (the only crypto it can do) and hands bundles to
+    // peers; it never sees a private key. keyVersion increments on every
+    // reset so clients can detect identity changes (safety-number warning).
+    keys: {
+      type: new Schema(
+        {
+          identityEd25519: { type: String, required: true }, // base64 pub
+          identityX25519: { type: String, required: true }, // base64 pub
+          signedPreKey: {
+            keyId: { type: Number, required: true },
+            pubX25519: { type: String, required: true },
+            sig: { type: String, required: true }, // Ed25519 over pubX25519 bytes
+          },
+          keyVersion: { type: Number, required: true, default: 1 },
+          publishedAt: { type: Date, required: true },
+        },
+        { _id: false }
+      ),
+      default: undefined,
+    },
+    // Opaque client-encrypted backup blob (identity + sessions wrapped under
+    // the recovery code). The server stores it, cannot read it.
+    keyBackup: { type: String, default: undefined, select: false, maxlength: 131072 },
   },
   { timestamps: true }
 );

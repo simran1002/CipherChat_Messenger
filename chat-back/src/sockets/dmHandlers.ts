@@ -1,7 +1,33 @@
+import mongoose from "mongoose";
 import { DirectMessage } from "../models/DirectMessage.js";
-import { presenceRegistry } from "../shared/index.js";
+import { DMMessage } from "../models/DMMessage.js";
+import { presenceRegistry, rateLimiter } from "../shared/index.js";
 import { errMessage, logger } from "../utils/logger.js";
-import type { AppServer, AppSocket } from "./events.js";
+import type { AppServer, AppSocket, DirectMessagePayload, DmEnvelope, DmMessageAck } from "./events.js";
+
+const MAX_CT_BYTES = 16 * 1024; // padded 2000-char message ≈ 11KB base64
+
+/**
+ * Structural validation of an E2EE envelope. The server cannot (and must
+ * not) inspect content — it only enforces the shape so relays can't be
+ * abused as an arbitrary blob channel.
+ */
+function validEnvelope(env: unknown): env is DmEnvelope {
+  if (typeof env !== "object" || env === null) return false;
+  const e = env as Record<string, unknown>;
+  if (e.v !== 1) return false;
+  if (typeof e.sessionId !== "string" || e.sessionId.length > 64) return false;
+  if (typeof e.ctr !== "number" || !Number.isInteger(e.ctr) || e.ctr < 0) return false;
+  if (typeof e.ct !== "string" || e.ct.length === 0 || e.ct.length > MAX_CT_BYTES) return false;
+  if (e.init !== undefined) {
+    const i = e.init as Record<string, unknown>;
+    if (typeof i !== "object" || i === null) return false;
+    if (typeof i.ephPub !== "string" || i.ephPub.length > 64) return false;
+    if (typeof i.ik !== "string" || i.ik.length > 64) return false;
+    if (typeof i.spkId !== "number") return false;
+  }
+  return true;
+}
 
 export function registerDmHandlers(io: AppServer, socket: AppSocket): void {
   const userId = socket.data.userId;
@@ -16,43 +42,98 @@ export function registerDmHandlers(io: AppServer, socket: AppSocket): void {
     socket.leave(`dm:${conversationId}`);
   });
 
-  socket.on("directMessage", async ({ conversationId, message }) => {
+  socket.on("directMessage", async (payload: DirectMessagePayload, ackFn) => {
+    const ack = (a: DmMessageAck) => {
+      if (typeof ackFn === "function") ackFn(a);
+    };
     try {
-      if (!message || !message.trim() || message.length > 2000) return;
-      const conv = await DirectMessage.findOne({ _id: conversationId, participants: userId });
-      if (!conv) return;
+      const { conversationId, message, envelope, clientMessageId } = payload;
 
-      conv.messages.push({ user: userId, message: message.trim(), createdAt: new Date() } as never);
+      if (!mongoose.Types.ObjectId.isValid(conversationId)) {
+        return ack({ ok: false, error: "invalid_message" });
+      }
+
+      // DM sends share the same per-user token bucket as room messages
+      if (!(await rateLimiter.allow(userId))) {
+        return ack({ ok: false, error: "server_error" });
+      }
+
+      // Exactly one content shape
+      const isPlain = typeof message === "string" && message.trim().length > 0;
+      const isE2ee = envelope !== undefined;
+      if (isPlain === isE2ee) return ack({ ok: false, error: "invalid_message" });
+      if (isPlain && message!.length > 2000) return ack({ ok: false, error: "invalid_message" });
+      if (isE2ee && !validEnvelope(envelope)) return ack({ ok: false, error: "invalid_message" });
+
+      const conv = await DirectMessage.findOne({ _id: conversationId, participants: userId });
+      if (!conv) return ack({ ok: false, error: "not_participant" });
+
+      // Idempotent retries
+      if (clientMessageId) {
+        const existing = await DMMessage.findOne({ conversationId, clientMessageId }).select("_id");
+        if (existing) {
+          return ack({ ok: true, messageId: existing._id.toString(), duplicate: true });
+        }
+      }
+
+      let saved;
+      try {
+        saved = await DMMessage.create({
+          conversationId,
+          senderId: userId,
+          clientMessageId: clientMessageId || null,
+          type: isE2ee ? "e2ee/v1" : "plaintext-legacy",
+          body: isPlain ? message!.trim() : "",
+          envelope: isE2ee ? envelope : undefined,
+        });
+      } catch (err) {
+        // Unique-index races: concurrent retry (clientMessageId) or replayed
+        // E2EE counter — both are duplicate-shaped, not failures.
+        if (err instanceof Error && "code" in err && (err as { code?: number }).code === 11000) {
+          if (clientMessageId) {
+            const winner = await DMMessage.findOne({ conversationId, clientMessageId }).select("_id");
+            if (winner) return ack({ ok: true, messageId: winner._id.toString(), duplicate: true });
+          }
+          return ack({ ok: false, error: "replayed_counter" });
+        }
+        throw err;
+      }
+
       conv.lastMessageAt = new Date();
       await conv.save();
 
-      const savedMsg = conv.messages[conv.messages.length - 1];
-      if (!savedMsg) return;
-      const user = await presenceRegistry.get(userId);
-      const payload = {
-        _id: String(savedMsg._id),
-        message: savedMsg.message,
+      const sender = await presenceRegistry.get(userId);
+      const wire = {
+        conversationId,
+        _id: saved._id.toString(),
+        type: saved.type as "e2ee/v1" | "plaintext-legacy",
+        message: isPlain ? saved.body : undefined,
+        envelope: isE2ee ? (envelope as DmEnvelope) : undefined,
+        clientMessageId: clientMessageId || null,
         userId,
-        name: user?.name || "Unknown",
-        dp: user?.dp || "",
-        createdAt: savedMsg.createdAt,
+        name: sender?.name || "Unknown",
+        dp: sender?.dp || "",
+        createdAt: saved.createdAt,
       };
 
-      io.to(`dm:${conversationId}`).emit("newDirectMessage", { conversationId, ...payload });
+      ack({ ok: true, messageId: saved._id.toString() });
+      io.to(`dm:${conversationId}`).emit("newDirectMessage", wire);
 
       const otherId = conv.participants.find((p) => p.toString() !== userId)?.toString();
       if (otherId) {
-        const otherInfo = await presenceRegistry.get(otherId);
-        if (otherInfo) {
-          io.to(otherInfo.socketId).emit("dmNotification", {
-            conversationId,
-            from: user?.name || "Someone",
-            message: message.trim().slice(0, 80),
-          });
-        }
+        // Per-user room — reaches the recipient on ANY replica via the Redis
+        // adapter. Content-free for E2EE messages: the server has nothing to
+        // preview, and deliberately never forwards ciphertext in
+        // notifications.
+        io.to(`user:${otherId}`).emit("dmNotification", {
+          conversationId,
+          from: sender?.name || "Someone",
+          message: isPlain ? message!.trim().slice(0, 80) : "🔒 Encrypted message",
+        });
       }
     } catch (err) {
       logger.error("Error sending DM", { error: errMessage(err) });
+      ack({ ok: false, error: "server_error" });
     }
   });
 

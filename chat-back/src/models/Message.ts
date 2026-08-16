@@ -74,8 +74,18 @@ const messageSchema = new Schema(
 
 messageSchema.index({ chatroom: 1, createdAt: -1 });
 messageSchema.index({ chatroom: 1, pinned: 1 });
-messageSchema.index({ chatroom: 1, sequenceNumber: 1 });
-messageSchema.index({ clientMessageId: 1 }, { sparse: true });
+// DB-level backstops for the delivery guarantees: even if every dedup /
+// sequence layer above fails, the same idempotency key or sequence slot can
+// never be persisted twice. Partial filters exclude legacy rows (seq 0 /
+// null clientMessageId).
+messageSchema.index(
+  { chatroom: 1, sequenceNumber: 1 },
+  { unique: true, partialFilterExpression: { sequenceNumber: { $gt: 0 } } }
+);
+messageSchema.index(
+  { clientMessageId: 1 },
+  { unique: true, partialFilterExpression: { clientMessageId: { $type: "string" } } }
+);
 messageSchema.index({ chatroom: 1, message: "text" });
 messageSchema.index(
   { expiresAt: 1 },

@@ -62,6 +62,8 @@ export interface IPresenceRegistry {
   get(userId: string): Promise<OnlineUserInfo | undefined>;
   update(userId: string, patch: Partial<OnlineUserInfo>): Promise<boolean>;
   delete(userId: string): Promise<void>;
+  /** Heartbeat hook — refreshes any TTL-based liveness the backend keeps. */
+  touch(userId: string): Promise<void>;
   /** Serializable roster for the `onlineUsers` broadcast. */
   list(): Promise<OnlineUserPublic[]>;
 }

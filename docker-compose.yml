@@ -1,0 +1,64 @@
+# Single-node development stack.
+# Phase 2 adds docker-compose.scale.yml: nginx LB + 2 backend replicas + Redis-backed state.
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build: ./chat-back
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE: mongodb://mongo:27017/cipherchat
+      SECRET: ${SECRET:-dev-only-secret-change-me-please-32chars!}
+      PORT: "8000"
+      ENV: ${ENV:-DEVELOPMENT}
+      REDIS_URL: redis://redis:6379
+      FRONTEND_URL: http://localhost:3000
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      # Named volume so uploads survive container replacement (and are shared
+      # between replicas in the scale-out compose file)
+      - uploads:/app/uploads
+
+  frontend:
+    build:
+      context: ./chat-front
+      args:
+        VITE_API_URL: http://localhost:8000
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
+
+volumes:
+  mongo-data:
+  uploads:

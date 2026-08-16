@@ -47,19 +47,25 @@ export interface ChatMessage {
 export interface DmConversation {
   _id: string;
   participant: { _id: string; name: string; email?: string; dp?: string } | null;
-  lastMessage: { message: string; createdAt: string } | null;
+  lastMessage: { message: string; encrypted?: boolean; createdAt: string } | null;
   lastMessageAt: string;
 }
 
-/** Single DM message (GET /dm/:id/messages and socket receive). */
+/** Single DM message (GET /dm/:id/messages and socket receive), post-decrypt. */
 export interface DmMessage {
   _id: string;
-  message: string;
+  type?: "e2ee/v1" | "plaintext-legacy";
+  message: string; // decrypted plaintext, legacy body, or placeholder
+  envelope?: import("./socket").DmEnvelope;
+  clientMessageId?: string | null;
+  encrypted?: boolean; // rendered from an e2ee envelope
+  undecryptable?: boolean; // envelope present but no session/key
   edited?: boolean;
   userId: string;
   name?: string;
   dp?: string;
   createdAt: string;
+  _pending?: boolean;
 }
 
 export interface Chatroom {

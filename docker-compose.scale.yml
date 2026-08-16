@@ -1,0 +1,73 @@
+# Horizontal-scaling demo: nginx (sticky sessions) → 2 backend replicas
+# sharing MongoDB + Redis. All coordination state (dedup, sequences, rate
+# limits, presence, socket fan-out) lives in Redis, so the two replicas
+# behave as one logical server.
+#
+#   docker compose -f docker-compose.scale.yml up --build
+#   → app on http://localhost:3000, API via LB on http://localhost:8080
+#
+# Kill-a-pod demo (messages keep flowing, clients reconnect to the survivor):
+#   docker compose -f docker-compose.scale.yml stop backend1
+services:
+  mongo:
+    image: mongo:7
+    volumes:
+      - mongo-data-scale:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  backend1: &backend
+    build: ./chat-back
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment: &backend-env
+      DATABASE: mongodb://mongo:27017/cipherchat
+      SECRET: ${SECRET:-dev-only-secret-change-me-please-32chars!}
+      PORT: "8000"
+      ENV: ${ENV:-DEVELOPMENT}
+      REDIS_URL: redis://redis:6379
+      FRONTEND_URL: http://localhost:3000
+    volumes:
+      - uploads-scale:/app/uploads
+
+  backend2:
+    <<: *backend
+
+  lb:
+    image: nginx:1.27-alpine
+    depends_on:
+      - backend1
+      - backend2
+    volumes:
+      - ./deploy/nginx-lb.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8080:80"
+
+  frontend:
+    build:
+      context: ./chat-front
+      args:
+        # The browser talks to the LB, never to a specific pod
+        VITE_API_URL: http://localhost:8080
+    depends_on:
+      - lb
+    ports:
+      - "3000:80"
+
+volumes:
+  mongo-data-scale:
+  uploads-scale:

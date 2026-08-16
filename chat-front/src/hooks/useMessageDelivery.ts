@@ -56,7 +56,12 @@ export function useMessageDelivery(socket: AppSocket | null, chatroomId: string 
 
       // If socket is offline, persist to IndexedDB and bail
       if (!socket?.connected) {
-        await enqueue(payload);
+        await enqueue({
+          clientMessageId,
+          kind: "chatroom",
+          targetId: chatroomId,
+          payload: { message: data.message, replyTo: data.replyTo, expiresIn: data.expiresIn },
+        });
         return { queued: true, clientMessageId };
       }
 
@@ -80,7 +85,12 @@ export function useMessageDelivery(socket: AppSocket | null, chatroomId: string 
                 pendingRef.current.set(clientMessageId, { retries, timeoutId });
               } else {
                 // Exhausted retries — queue for next reconnect
-                void enqueue(payload).then(() => {
+                void enqueue({
+                  clientMessageId,
+                  kind: "chatroom",
+                  targetId: chatroomId,
+                  payload: { message: data.message, replyTo: data.replyTo, expiresIn: data.expiresIn },
+                }).then(() => {
                   removePending(clientMessageId);
                   resolve({ ok: false, queued: true, clientMessageId });
                 });

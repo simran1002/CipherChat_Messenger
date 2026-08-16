@@ -5,7 +5,10 @@ import rateLimit from "express-rate-limit";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import mongoose from "mongoose";
+import RedisStore from "rate-limit-redis";
 import { env } from "./config/env.js";
+import { getRedis, redisEnabled } from "./config/redis.js";
+import { registry } from "./shared/prometheus.js";
 import { errorHandler, notFound } from "./middlewares/errorHandlers.js";
 import userRoutes from "./routes/user.js";
 import chatroomRoutes from "./routes/chatroom.js";
@@ -14,6 +17,7 @@ import uploadRoutes from "./routes/upload.js";
 import aiRoutes from "./routes/ai.js";
 import presenceRoutes from "./routes/presence.js";
 import analyticsRoutes from "./routes/analytics.js";
+import keysRoutes from "./routes/keys.js";
 
 /** Shared between HTTP CORS and the Socket.IO server (they used to diverge). */
 export const allowedOrigins = [
@@ -36,11 +40,23 @@ app.use(
   })
 );
 
+// With Redis, HTTP rate-limit counters are shared across replicas — otherwise
+// N pods would multiply every limit by N.
+function limiterStore(prefix: string) {
+  return redisEnabled
+    ? new RedisStore({
+        prefix: `rl:${prefix}:`,
+        sendCommand: (...args: string[]) => getRedis().call(args[0]!, ...args.slice(1)) as never,
+      })
+    : undefined;
+}
+
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
+  store: limiterStore("user"),
   message: { message: "Too many requests, please try again later." },
 });
 app.use("/user", authLimiter);
@@ -50,6 +66,7 @@ const uploadLimiter = rateLimit({
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
+  store: limiterStore("upload"),
   message: { message: "Too many uploads, please slow down." },
 });
 app.use("/upload", uploadLimiter);
@@ -71,6 +88,13 @@ app.use(
   })
 );
 
+// Prometheus scrape target. Content-free (counts/latencies only) — intended
+// for the private network; in production, restrict at the ingress/LB layer.
+app.get("/metrics", async (_req, res) => {
+  res.set("Content-Type", registry.contentType);
+  res.send(await registry.metrics());
+});
+
 app.get("/health", (_req, res) => {
   const mongoUp = mongoose.connection.readyState === 1;
   res.status(mongoUp ? 200 : 503).json({
@@ -90,6 +114,7 @@ app.use("/upload", uploadRoutes);
 app.use("/ai", aiRoutes);
 app.use("/presence", presenceRoutes);
 app.use("/analytics", analyticsRoutes);
+app.use("/keys", keysRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

@@ -28,6 +28,10 @@ export class PresenceRegistry implements IPresenceRegistry {
     this.users.delete(userId);
   }
 
+  async touch(): Promise<void> {
+    // no TTL in the in-memory registry — liveness is the heartbeat timer's job
+  }
+
   async list(): Promise<OnlineUserPublic[]> {
     return Array.from(this.users.entries()).map(([userId, u]) => ({
       userId,

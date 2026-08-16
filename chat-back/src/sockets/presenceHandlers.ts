@@ -1,5 +1,6 @@
 import { User } from "../models/User.js";
 import { heartbeat, metrics, presenceRegistry, rateLimiter, typingMgr } from "../shared/index.js";
+import { socketsConnected } from "../shared/prometheus.js";
 import { errMessage, logger } from "../utils/logger.js";
 import type { AppServer, AppSocket } from "./events.js";
 
@@ -12,6 +13,7 @@ export async function handleConnect(io: AppServer, socket: AppSocket): Promise<v
   const userId = socket.data.userId;
   logger.info("Socket connected", { userId });
   metrics.userConnected();
+  socketsConnected.inc();
 
   try {
     const user = await User.findByIdAndUpdate(userId, { isOnline: true }, { new: true }).select(
@@ -51,6 +53,8 @@ export function registerPresenceHandlers(io: AppServer, socket: AppSocket): void
 
   socket.on("heartbeat", () => {
     heartbeat.refresh(userId);
+    // Refresh the Redis presence TTL (safety net if this pod dies uncleanly)
+    void presenceRegistry.touch(userId);
     socket.emit("heartbeatAck", { ts: Date.now() });
   });
 
@@ -73,6 +77,7 @@ export function registerPresenceHandlers(io: AppServer, socket: AppSocket): void
     typingMgr.clearUser(userId);
     await rateLimiter.clear(userId);
     metrics.userDisconnected();
+    socketsConnected.dec();
     await presenceRegistry.delete(userId);
     await broadcastOnlineUsers(io);
     try {

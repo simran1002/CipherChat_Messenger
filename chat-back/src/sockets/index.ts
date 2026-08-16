@@ -1,6 +1,8 @@
 import { Server } from "socket.io";
+import { createAdapter } from "@socket.io/redis-adapter";
 import type { Server as HttpServer } from "node:http";
 import { verifyToken } from "../middlewares/auth.js";
+import { createRedisConnection, redisEnabled } from "../config/redis.js";
 import { logger } from "../utils/logger.js";
 import type { AppServer } from "./events.js";
 import { registerDeliveryHandlers } from "./deliveryHandlers.js";
@@ -17,6 +19,15 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
       credentials: true,
     },
   });
+
+  // Redis adapter: room broadcasts fan out across every replica. Without it,
+  // io.to(room) only reaches sockets on this process.
+  if (redisEnabled) {
+    const pubClient = createRedisConnection("socket-pub");
+    const subClient = createRedisConnection("socket-sub");
+    io.adapter(createAdapter(pubClient, subClient));
+    logger.info("Socket.IO Redis adapter enabled");
+  }
 
   // ── Socket auth ─────────────────────────────────────────────────────────
   io.use((socket, next) => {
@@ -35,6 +46,10 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
   });
 
   io.on("connection", (socket) => {
+    // Per-user room: the cross-replica way to address "all of this user's
+    // sockets" (replaces the old raw-socketId targeting that silently dropped
+    // messages when sender and recipient landed on different pods).
+    void socket.join(`user:${socket.data.userId}`);
     void handleConnect(io, socket);
     registerPresenceHandlers(io, socket);
     registerRoomHandlers(io, socket);
