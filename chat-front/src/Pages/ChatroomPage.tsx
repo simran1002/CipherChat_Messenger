@@ -1,3 +1,4 @@
+import { useSocket } from "../contexts/SocketContext";
 import { useState, useEffect, useRef, useCallback, type FormEvent } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import {
@@ -27,7 +28,6 @@ import ScrollToBottomFAB from "../components/ScrollToBottomFAB";
 import AICoPilot from "../components/AICoPilot";
 import RoomMembersPanel from "../components/RoomMembersPanel";
 import type {
-  AppSocket,
   AuthUser,
   ChatMessage,
   ChatroomFileMessagePayload,
@@ -41,7 +41,6 @@ import type {
 const MESSAGES_PER_PAGE = 50;
 
 interface ChatroomPageProps {
-  socket: AppSocket | null;
   user: AuthUser | null;
 }
 
@@ -101,7 +100,8 @@ const mapRawMessage = (m: RawChatroomMessage): ChatMessage => ({
   createdAt: m.createdAt,
 });
 
-const ChatroomPage = ({ socket, user }: ChatroomPageProps) => {
+const ChatroomPage = ({ user }: ChatroomPageProps) => {
+  const { socket } = useSocket();
   // Route guarantees the param (/chatroom/:chatroomId)
   const chatroomId = useParams().chatroomId as string;
   const navigate = useNavigate();

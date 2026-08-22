@@ -193,7 +193,11 @@ class E2EEService {
 
   async markVerified(peerId: string): Promise<void> {
     const pin = await keyStore.getPeerPin(peerId);
-    if (pin) await keyStore.savePeerPin({ ...pin, verified: true });
+    // Never succeed silently: a "Verified" badge must always be backed by a
+    // persisted pin (safetyNumberFor() pins on first view, so this only
+    // fires if the modal is driven out of order).
+    if (!pin) throw new Error("No pinned identity for this contact yet — open the safety number first.");
+    await keyStore.savePeerPin({ ...pin, verified: true });
   }
 
   // ── Preview cache ──────────────────────────────────────────────────────────

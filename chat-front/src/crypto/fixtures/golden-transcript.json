@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "regenerate": "REGEN_FIXTURE=1 npx vitest run src/crypto/goldenTranscript.test.ts",
+  "conversationId": "conv-golden",
+  "aliceId": "alice",
+  "bobId": "bob",
+  "keys": {
+    "alice": {
+      "edPriv": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+      "edPub": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "xPriv": "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a",
+      "xPub": "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a",
+      "spkId": 1,
+      "spkPriv": "a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18506a2244ba449ac4",
+      "spkPub": "1c9fd88f45606d932a80c71824ae151d15d73e77de38e8e000852e614fae7019"
+    },
+    "bob": {
+      "edPriv": "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb",
+      "edPub": "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+      "xPriv": "5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb",
+      "xPub": "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f",
+      "spkId": 1,
+      "spkPriv": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "spkPub": "358072d6365880d1aeea329adf9121383851ed21a28e3b75e965d0d2cd166254"
+    },
+    "aliceEphemeral": {
+      "priv": "4b66e9d4d1b4673c5ad22691957d6af5c11b6421e0ea01d42ca4169e7918ba0d",
+      "pub": "ff63fe57bfbf43fa3f563628b149af704d3db625369c49983650347a6a71e00e"
+    }
+  },
+  "bobBundleSig": "1224brxkxORIZer/TmwL0ft8+ihVD1qv+uPoRY6qQxGriPqUW7d2yMv/+rX2NCC/uQg1OZfhReC8GyhAonrDAQ==",
+  "init": {
+    "sessionId": "6f1e2d3c-4b5a-4c6d-8e9f-0a1b2c3d4e5f",
+    "ephPub": "/2P+V7+/Q/o/VjYosUmvcE09tiU2nEmYNlA0empx4A4=",
+    "ik": "hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=",
+    "spkId": 1
+  },
+  "chains": {
+    "ckInit": "QjblxxIyvX7UfukCTGeeT/xpNNS5BVVFEhEZlW3JJ3A=",
+    "ckResp": "cJxRWwf5SapHM4iiiB6SIJ4VNf02knPV3IaAhKTwZFg="
+  },
+  "messages": [
+    {
+      "dir": "alice->bob",
+      "ctr": 0,
+      "plaintext": "Hello Bob — this is the golden transcript. Message 1/6.",
+      "envelope": {
+        "v": 1,
+        "sessionId": "6f1e2d3c-4b5a-4c6d-8e9f-0a1b2c3d4e5f",
+        "ctr": 0,
+        "ct": "1J+CuGzBOmemVu6uzPux4DG9NXSBTAW/7LgyEjgPEpbgJ45l+alRE7H6CbheKsQ+50P+Clvo+P+yMGmRTEpwpqcByylOEN6ghAUOE3hsLfXYHu9xyQK/PeYVxoQuPj2loCOOHkGfWDFImoXvnqz5oRV5OXO23uiW613C5UwfL1hERzUPCb+zWDngTlsdRHtbI2aK5pFJn/LPRrs+xOPwWMQn3LAN0gO4tGi65hIhw2m81RUmumVp2q6NKU9MWop+SKdqVjofstBeoHH/VNnV1DGyyGMZVSwkiiCyNFSLGv5riO3Hx0SQJ1mUutl7lSOFWF3FlZi4tYeYHeDAsCQUSCDGBSa/5MpWY79i0V8WSHU=",
+        "init": {
+          "ephPub": "/2P+V7+/Q/o/VjYosUmvcE09tiU2nEmYNlA0empx4A4=",
+          "ik": "hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=",
+          "spkId": 1
+        }
+      }
+    },
+    {
+      "dir": "bob->alice",
+      "ctr": 0,
+      "plaintext": "Hi Alice 👋 (2/6)",
+      "envelope": {
+        "v": 1,
+        "sessionId": "6f1e2d3c-4b5a-4c6d-8e9f-0a1b2c3d4e5f",
+        "ctr": 0,
+        "ct": "oIcXv11uQx4S+OAyxEgkooJ0aTAMBxTayi2p6hyuhCTfIy7+0RcbcpXLzjPZ1h0W1MxLe9hWdbKNjU1mriYvVbgApU4xBLa+O1WNRmSGzmEJ3ovGl9Dv4m0FABihO09w+KKVEW4z+ZlYBb7swHaLdN/yqqM5bfZic+lO7RvQNKEiREOibaBT48LlUikr87nRyXD+FOfcQFSCFLcgUk1DNbc9obmHe6uRJJprBYNpkJKEmf7dYVSSo2eggSob0ye6vhjTAszrN27kNLjt8j8ppIR7EE9bLAiIuWfmlypi7SM1wisnBE4UScH3yWf0BGbyDcJ0COXEvYbicgD5Q7cOgAXJ99R6IcWBUmESeiB4Oy0="
+      }
+    },
+    {
+      "dir": "alice->bob",
+      "ctr": 1,
+      "plaintext": "مرحبا بالعالم — RTL text, message 3/6",
+      "envelope": {
+        "v": 1,
+        "sessionId": "6f1e2d3c-4b5a-4c6d-8e9f-0a1b2c3d4e5f",
+        "ctr": 1,
+        "ct": "t5vY4GZtjtC5Q2kE366I1XGeCIbCkxY6qe6zGHPq1vra8D8bI/5o7ScfFdPTO28RZrOVylRXRA+G/Tp/mKQGx/jHQVKO1pMHrs7O9RGhdjxpCWN/XKASW8FUyV8B4oNjgxlR37QGFSvbhle94lnJzCZhqZqs/S/wLH+guOj8VbnUqwpktCkpbpgYsJUmKr8LDUU4EyhaXqYpnC4wXJg3Sh2BQCTQ6mF3H52lH75sPdawIXUnvmURfwLhNc80dhww5j46jp8RILTp5/2YjzFAeueIgHc0ksdsebs/7oTlSvC3QSzOzitH9Y5m0V9AfSLVZu8ZA2ZyTOzGtFKJeOcwd4y/Jur8cfRbCIoVcK9GvRU="
+      }
+    },
+    {
+      "dir": "bob->alice",
+      "ctr": 1,
+      "plaintext": "",
+      "envelope": {
+        "v": 1,
+        "sessionId": "6f1e2d3c-4b5a-4c6d-8e9f-0a1b2c3d4e5f",
+        "ctr": 1,
+        "ct": "82fa9efFZbpewyTUjvAUuEtZHwnLWh+PlZQqVHpY/4RxqQ2mX/f3o1eqYAvVFtAOzK/Yp44mbMpouhzgS0XANyBqeYrvEYCRQ4CtXU6/IV0O+qBBAX60+5JT+uYKMvDJyuKjx1RPMg7qWMD9C8oMhnKFy7sFd0O/YJLPyEOX/jxkMdOrcckNC/jELG/J+IasbZpD5nbWz+7/C/HUpl3LXj3o9+2qPDC6fPpFUtGJ8hQWSXUTKHZZcZ961L+v3IUCLaoHGYF+f08wUVAy8I0aO4ySdUcHIQZi1n30bgP06Dt11hbKyhg8othZqTgvsSbc8vllChtogPe1Z8cQ21wtR1dmrELt9Xrp9jXB0rk6PUY="
+      }
+    },
+    {
+      "dir": "alice->bob",
+      "ctr": 2,
+      "plaintext": "5/6 crosses the 256-byte pad bucket: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "envelope": {
+        "v": 1,
+        "sessionId": "6f1e2d3c-4b5a-4c6d-8e9f-0a1b2c3d4e5f",
+        "ctr": 2,
+        "ct": "cCrm2kVlHAUQDl/A4pgUkZKsQtFw2RRp3m7nPRc4dbNHpIAWmDrmTWpO9sFxKb5xaiZZ+6kkrYraap0S4BYQxuGBTlAxC2jycO7jqECjJbKiptW/mmn+/X/esNMa+DEFJM2hZLxH1smZcSI7swQljjLx8KIlsY2jKS0XMDOS20aMGhTgMqdOroQpS+wxtpPpHb1CjdmbtJ/+KU2+Abzklh1OghLEZGbvSaPLNDosWESxUQCvYLvE+4uEZl4k1KQNRumhVmqBEKIS57MPqeJxfoYrVYo2mV0Q2eg6Tb+2uulGl89CgNW5eDREu4w9hS7GCmyMYA4zkbNmEf1IL6cGodmIE4bLDTETar9aaTCywq5STRbWY/fOFG0K4zqSTniSXgqEOUY2j0BYNa8WnZVDKwLLJ9FgRrAF0wR9Ed6K7yQpMNJzQJQ9nV47BDJz6GC2lflFW+viZjNuCOBbgz64vfbXtxUrb9knsvh8CRvK8UUooFdJm3mN4tmozKuzc+Vu3hvPbY8hciFYZa3TKG4kxSGfJ18Fpb9SaO8d/KJ8/1LLJ8J0zJ1VxrXaaTcI1DKYz0IftMtNtWdjWpq2qlAwov/h42qTPKww3Lhx8FVDtFu+R3Igl0NJO13xOLIvuc39sokRNPR4fXSNhPqf/qh9mnWkVlM9VHotMw9iguChsIxHv0/qPiEBx2hgdvU/G+Rw"
+      }
+    },
+    {
+      "dir": "bob->alice",
+      "ctr": 2,
+      "plaintext": "Last one — 6/6 ✅",
+      "envelope": {
+        "v": 1,
+        "sessionId": "6f1e2d3c-4b5a-4c6d-8e9f-0a1b2c3d4e5f",
+        "ctr": 2,
+        "ct": "EK7Wvm6vRPeJCvRbnDi/cNwKCEbfQyQVgcOOnBmnr2u3aoh4TpGWW/L+k1XLIdEf4uwKWzd+j7ty4wOiC+0mnUAnYqJYtAPiC65wHw29+jrkzpXSFM+O8ClbGWIVDH104e1uAGkMNI7we+ygUOOoTLTt811igDH4sv2qid/6fLQrr8t1Z2Bq8oWW6flKqsLDOHwZQGL5uatXc6s/8y8eWxZ85qtH51FCht3hrDFzA0ONS6mbD86GmC/ljzKZEG0eGLXugTTi1jcUvVzM304pj4wCTzTjlhct9vutlmAW7p2quzipFxwpWTb4Y5IEFJwg1hdtrtVvRwBia3xvqhnMCG1Zr91ZCXx8hWGU41JJoqM="
+      }
+    }
+  ]
+}

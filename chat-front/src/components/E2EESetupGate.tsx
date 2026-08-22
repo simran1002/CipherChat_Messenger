@@ -39,6 +39,9 @@ const E2EESetupGate = ({ status, reason, onReady, children }: E2EESetupGateProps
   const [recoveryCode, setRecoveryCode] = useState("");
   const [restoreInput, setRestoreInput] = useState("");
   const [restoreError, setRestoreError] = useState("");
+  // The recovery code is shown exactly once — require an explicit
+  // acknowledgement before the continue button can dismiss it.
+  const [savedAck, setSavedAck] = useState(false);
 
   if (status === "unavailable") {
     return (
@@ -136,9 +139,23 @@ const E2EESetupGate = ({ status, reason, onReady, children }: E2EESetupGateProps
                 <ClipboardDocumentIcon className="w-4 h-4" />
               </button>
             </div>
+            <label className="flex items-start gap-3 mb-4 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={savedAck}
+                onChange={(e) => setSavedAck(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-gray-600 bg-gray-900 text-primary-500 focus:ring-primary-500"
+                aria-label="I have written this code down or stored it in a password manager"
+              />
+              <span className="text-sm text-gray-300">
+                I have written this code down or stored it in a password manager. I understand it
+                will not be shown again.
+              </span>
+            </label>
             <button
               onClick={onReady}
-              className="w-full py-3 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 text-white text-sm font-medium transition-all shadow-lg shadow-primary-500/20"
+              disabled={!savedAck}
+              className="w-full py-3 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 text-white text-sm font-medium transition-all shadow-lg shadow-primary-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               I saved my recovery code
             </button>

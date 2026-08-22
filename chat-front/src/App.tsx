@@ -5,7 +5,7 @@ import Header from "./components/Header";
 import Toaster from "./components/Toaster";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { SocketContext } from "./contexts/SocketContext";
-import api, { getApiUrl, refreshAccessToken } from "./services/api";
+import api, { getSocketUrl, refreshAccessToken } from "./services/api";
 import type { AppSocket, AuthUser } from "./types";
 
 const IndexPage = lazy(() => import("./Pages/IndexPage"));
@@ -45,7 +45,7 @@ function App() {
   const setupSocket = useCallback(() => {
     const token = localStorage.getItem("CC_Token");
     if (token && !socketRef.current) {
-      const newSocket: AppSocket = io(getApiUrl(), {
+      const newSocket: AppSocket = io(getSocketUrl(), {
         // auth payload — not the query string, which proxies log. The callback
         // form re-reads storage on every reconnect attempt, so a token rotated
         // by the silent-refresh interceptor is picked up automatically.
@@ -123,7 +123,7 @@ function App() {
       <SocketContext.Provider value={{ socket, setupSocket, logout: handleLogout }}>
         <Router>
           <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-            <Header user={user} onLogout={handleLogout} socket={socket} />
+            <Header user={user} onLogout={handleLogout} />
             <main>
               <Suspense fallback={<FullScreenSpinner label="Loading..." />}>
                 <Routes>
@@ -134,7 +134,7 @@ function App() {
                       user ? (
                         <Navigate to="/dashboard" replace />
                       ) : (
-                        <LoginPage setupSocket={setupSocket} setUser={setUser} />
+                        <LoginPage setUser={setUser} />
                       )
                     }
                   />
@@ -146,7 +146,7 @@ function App() {
                     path="/dashboard"
                     element={
                       <ProtectedRoute>
-                        <DashboardPage socket={socket} />
+                        <DashboardPage />
                       </ProtectedRoute>
                     }
                   />
@@ -154,7 +154,7 @@ function App() {
                     path="/chatroom/:chatroomId"
                     element={
                       <ProtectedRoute>
-                        <ChatroomPage socket={socket} user={user} />
+                        <ChatroomPage user={user} />
                       </ProtectedRoute>
                     }
                   />
@@ -162,7 +162,7 @@ function App() {
                     path="/messages"
                     element={
                       <ProtectedRoute>
-                        <DirectMessagesPage socket={socket} user={user} />
+                        <DirectMessagesPage user={user} />
                       </ProtectedRoute>
                     }
                   />

@@ -1,6 +1,8 @@
 import axios, { AxiosError, type InternalAxiosRequestConfig } from "axios";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+// Unset → same origin. In dev that means the Vite proxy (vite.config.ts);
+// production images bake an absolute URL at build time.
+const API_URL = import.meta.env.VITE_API_URL || "";
 
 const api = axios.create({
   baseURL: API_URL,
@@ -74,7 +76,11 @@ api.interceptors.response.use(
   }
 );
 
+/** Base URL for REST, sockets, and absolutizing `/uploads/...` paths ("" = same origin). */
 export const getApiUrl = (): string => API_URL;
+
+/** Absolute origin for socket.io ("" is not a valid socket.io URL). */
+export const getSocketUrl = (): string => API_URL || window.location.origin;
 export { refreshAccessToken };
 
 export default api;

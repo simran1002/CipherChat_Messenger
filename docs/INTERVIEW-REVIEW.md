@@ -155,6 +155,28 @@ probing, and an honest account of what impresses vs. what can be attacked.
 - ~~`/user/refresh` shared the generic `/user` bucket~~ → dedicated 30/15 min
   limiter on top.
 
+- ~~Frontend tests covered hooks/services/crypto but no components~~ → 44
+  Testing-Library render tests (RoomMembersPanel, E2EESetupGate,
+  SafetyNumberModal, MetricsDashboardPage) with framer-motion/recharts stubbed.
+- ~~Golden E2EE transcript lived only inside a test~~ → committed
+  `src/crypto/fixtures/golden-transcript.json` (RFC-vector private scalars,
+  fixed ephemeral + sessionId); tests assert every envelope decrypts AND that
+  re-sealing is byte-identical — a second implementation needs only the JSON.
+- ~~"KATs against both noble and WebCrypto"~~ → interchangeability suite:
+  AES-256-GCM / HKDF / HMAC computed via `crypto.subtle` and via noble on the
+  same vectors are byte-identical and cross-decrypt; X25519 shared secrets
+  agree between WebCrypto keys and noble (Node 20 supports it).
+- ~~`SocketContext` coexisted with `socket` props~~ → props removed; Header
+  and every page read `useSocket()`.
+- ~~No Vite dev proxy~~ → same-origin default + proxy for API prefixes and
+  `/socket.io` (ws); fresh clone needs no `.env`, dev has no CORS.
+- ~~Recovery code dismissible with one click~~ → explicit "I have written this
+  code down" acknowledgement gates the continue button (test pins it).
+- ~~`markVerified` silently no-op'd without a pin while the badge flipped~~ →
+  now throws; the modal's existing error path shows it.
+- ~~No demo recording in the README~~ → real-output terminal render (SVG) of
+  the failover PASS, linked to the reproducible script.
+
 **Known gaps an interviewer could press (be ready, or fix next):**
 - **DM attachments are not E2EE** (text envelopes only) — call it out before
   they do; client-side blob encryption before `put()` is the natural

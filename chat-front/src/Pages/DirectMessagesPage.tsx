@@ -1,3 +1,4 @@
+import { useSocket } from "../contexts/SocketContext";
 import React, { useState, useEffect, useRef, useCallback, type FormEvent } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -17,7 +18,7 @@ import E2EESetupGate from "../components/E2EESetupGate";
 import SafetyNumberModal from "../components/SafetyNumberModal";
 import { getCurrentUserId } from "../hooks/useCurrentUser";
 import { stringToColor, getInitials, formatTime, formatDateDivider } from "../utils/helpers";
-import type { AppSocket, AuthUser, DmConversation, DmMessage } from "../types";
+import type { AuthUser, DmConversation, DmMessage } from "../types";
 import type {
   DirectMessagePayload,
   DmEnvelope,
@@ -80,11 +81,12 @@ const Avatar = ({ user, size = "w-10 h-10" }: { user: AvatarUser | null | undefi
 };
 
 interface DirectMessagesPageProps {
-  socket: AppSocket | null;
   user: AuthUser | null;
 }
 
-const DirectMessagesPage = ({ socket }: DirectMessagesPageProps) => {
+// `user` prop kept for call-site parity (App passes it); the page reads identity from storage.
+const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
+  const { socket } = useSocket();
   const [conversations, setConversations] = useState<DmConversation[]>([]);
   const [activeConv, setActiveConv] = useState<ConversationLike | null>(null);
   const [messages, setMessages] = useState<DmMessage[]>([]);

@@ -1,3 +1,4 @@
+import { useSocket } from "../contexts/SocketContext";
 import { useState, useEffect, useCallback, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
@@ -13,7 +14,7 @@ import {
 } from "@heroicons/react/24/outline";
 import { makeToast } from "../utils/toast";
 import api from "../services/api";
-import type { AppSocket, Chatroom } from "../types";
+import type { Chatroom } from "../types";
 
 /** GET /chatroom rows now carry membership + unread info (Phase 4). */
 type DashboardRoom = Chatroom & {
@@ -23,11 +24,8 @@ type DashboardRoom = Chatroom & {
   isPrivate?: boolean;
 };
 
-interface DashboardPageProps {
-  socket: AppSocket | null;
-}
-
-const DashboardPage = ({ socket }: DashboardPageProps) => {
+const DashboardPage = () => {
+  const { socket } = useSocket();
   const [chatrooms, setChatrooms] = useState<DashboardRoom[]>([]);
   const [newChatroomName, setNewChatroomName] = useState("");
   const [newRoomPrivate, setNewRoomPrivate] = useState(false);

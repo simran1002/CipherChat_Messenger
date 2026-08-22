@@ -1,3 +1,4 @@
+import { useSocket } from "../contexts/SocketContext";
 import { useState, type ChangeEvent, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
@@ -13,11 +14,11 @@ import api from "../services/api";
 import type { AuthUser } from "../types";
 
 interface LoginPageProps {
-  setupSocket: () => void;
   setUser: (u: AuthUser) => void;
 }
 
-const LoginPage = ({ setupSocket, setUser }: LoginPageProps) => {
+const LoginPage = ({ setUser }: LoginPageProps) => {
+  const { setupSocket } = useSocket();
   const [formData, setFormData] = useState({ email: "", password: "" });
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);

@@ -1,3 +1,4 @@
+import { useSocket } from "../contexts/SocketContext";
 import { useState, useRef, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
@@ -18,7 +19,7 @@ import { stringToColor, getInitials } from "../utils/helpers";
 import NotificationsPanel from "./NotificationsPanel";
 import { getApiUrl } from "../services/api";
 import notificationService from "../services/NotificationService";
-import type { AppSocket, AuthUser } from "../types";
+import type { AuthUser } from "../types";
 
 interface HeaderNotification {
   id: number;
@@ -35,10 +36,10 @@ interface HeaderNotification {
 interface HeaderProps {
   user: AuthUser | null;
   onLogout?: () => void;
-  socket: AppSocket | null;
 }
 
-const Header = ({ user, onLogout, socket }: HeaderProps) => {
+const Header = ({ user, onLogout }: HeaderProps) => {
+  const { socket } = useSocket();
   const navigate = useNavigate();
   const { isDarkMode, toggleTheme } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);

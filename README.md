@@ -26,6 +26,19 @@ that never sees content.
 | **Failure survival** | 2+ replicas behind nginx `ip_hash`, `@socket.io/redis-adapter` fan-out, per-user rooms, seeded sequence counters, graceful `SIGTERM` drain | `docker compose -f docker-compose.scale.yml stop backend1` mid-conversation: zero lost, zero duplicated |
 | **Content-free observability** | prom-client histograms + counters per pod, in-app live metrics dashboard (`/metrics` route), k6 load thresholds | every metric passes "could this reveal what someone said?" — counts, latencies, outcomes only |
 
+## Demo
+
+The centerpiece is an asserted failover, not a screenshot: `npm run
+demo:failover` auto-detects which replica owns the client sockets, stops it
+mid-stream, and checks exactly-once persistence, gap-free sequences, and
+exactly-once receipt on the other client.
+
+![kill-a-pod failover run — real output](docs/media/failover-demo.svg)
+
+Reproduce live in ~1 minute: [docs/DEMO.md](docs/DEMO.md) (two isolated users
+in one browser via `localhost:3000` + `127.0.0.1:3000`, E2EE setup, the
+ciphertext-only database peek, and the pod kill).
+
 ## Feature surface
 
 - **Rooms** (server-readable team spaces): membership + roles
