@@ -33,12 +33,28 @@ proves. DevTools → Network → WS: show the `chatroomMessage` frame carrying
 `clientMessageId` and the ACK carrying `sequenceNumber`.
 
 ### 5. Live: kill a pod (2 min) — centerpiece
-`docker compose -f docker-compose.scale.yml stop backend1` while one browser
-types. The other browser's client reconnects to the surviving pod (via the
-LB), the offline queue drains, dedup absorbs the retries — zero lost, zero
-duplicated. Show `docker compose ps` and the reconnect in the console. Then
-restart backend1 and show it rejoining with correct sequence numbers (seeded
-from Mongo, not reset to 1).
+**Stop the pod that owns the sockets.** nginx `ip_hash` routes by client IP,
+and from one laptop every browser shares an IP — so hard-coding `backend1`
+usually kills the *other* replica and proves only shared state, not socket
+failover. `curl localhost:8080/health` returns `pod` = the socket owner.
+
+Two ways to run it:
+- **Automated (do this first, it's the proof):** `cd chat-back && npm run
+  demo:failover` — registers two users, streams 60 messages, stops the
+  socket-owning pod at #30, and asserts exactly-once persistence, gap-free
+  sequences, and exactly-once receipt on the other client. Expect
+  `reconnects alice=1 bob=1`, a few `retried sends` absorbed by dedup, PASS.
+- **Visual:** `docker compose -f docker-compose.scale.yml stop <that pod>`
+  while one browser types. The clients reconnect to the survivor (via the
+  LB), the offline queue drains, dedup absorbs the retries — zero lost, zero
+  duplicated. Show `docker compose ps` and the reconnect in the console.
+  Restart the pod and show it rejoining with correct sequence numbers
+  (seeded from Mongo, not reset to 1).
+
+Talking point: the first run of the verifier *found two real bugs* — the
+graceful shutdown hung on proxy keep-alives, and a client must explicitly
+reconnect after a server-initiated disconnect. Both fixed; both are in
+INTERVIEW-REVIEW.md. "The demo is also a test" is the SDE-3 line.
 
 ### 6. Live: offline queue (1 min)
 DevTools → Network → Offline. Send three messages (⏳ queued badge). Back

@@ -1,5 +1,6 @@
 import express from "express";
 import path from "node:path";
+import { hostname } from "node:os";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import cors from "cors";
@@ -100,6 +101,10 @@ app.get("/health", (_req, res) => {
   res.status(mongoUp ? 200 : 503).json({
     status: mongoUp ? "ok" : "degraded",
     mongo: mongoUp ? "connected" : mongoose.STATES[mongoose.connection.readyState],
+    // Which replica answered — behind an ip_hash LB this is also the pod that
+    // owns this client's sockets (same client IP → same upstream). The
+    // failover verifier uses it to target the right pod.
+    pod: hostname(),
     timestamp: new Date().toISOString(),
   });
 });

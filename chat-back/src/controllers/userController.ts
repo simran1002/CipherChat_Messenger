@@ -3,7 +3,15 @@ import bcrypt from "bcryptjs";
 import { User } from "../models/User.js";
 import { HttpError } from "../errors/HttpError.js";
 import { signToken } from "../middlewares/auth.js";
-import { issueRefreshToken, revokeRefreshToken, rotateRefreshToken } from "./authTokens.js";
+import {
+  issueRefreshToken,
+  listSessions,
+  revokeOtherSessions,
+  revokeRefreshToken,
+  revokeSessionById,
+  rotateRefreshToken,
+} from "./authTokens.js";
+import mongoose from "mongoose";
 import { logger } from "../utils/logger.js";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -77,6 +85,28 @@ export async function refresh(req: Request, res: Response): Promise<void> {
 export async function logout(req: Request, res: Response): Promise<void> {
   await revokeRefreshToken(req, res);
   res.json({ message: "Logged out." });
+}
+
+/** GET /user/sessions — every live session for the caller, current one flagged. */
+export async function getSessions(req: Request, res: Response): Promise<void> {
+  res.json({ sessions: await listSessions(req, req.payload!.id) });
+}
+
+/** DELETE /user/sessions/:sessionId — revoke one session (owner-scoped). */
+export async function revokeSession(req: Request, res: Response): Promise<void> {
+  const { sessionId } = req.params as { sessionId: string };
+  if (!mongoose.Types.ObjectId.isValid(sessionId)) throw HttpError.badRequest("Invalid session ID.");
+  const revoked = await revokeSessionById(req.payload!.id, sessionId);
+  if (!revoked) throw HttpError.notFound("Session not found.", "session_not_found");
+  logger.info("Session revoked", { userId: req.payload!.id, sessionId });
+  res.json({ message: "Session revoked.", sessionId });
+}
+
+/** DELETE /user/sessions — revoke all OTHER sessions ("sign out everywhere else"). */
+export async function revokeOthers(req: Request, res: Response): Promise<void> {
+  const revoked = await revokeOtherSessions(req, req.payload!.id);
+  logger.info("Other sessions revoked", { userId: req.payload!.id, revoked });
+  res.json({ message: `Signed out of ${revoked} other session(s).`, revoked });
 }
 
 export async function getProfile(req: Request, res: Response): Promise<void> {

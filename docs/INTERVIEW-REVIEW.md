@@ -48,9 +48,12 @@ probing, and an honest account of what impresses vs. what can be attacked.
 
 ## WOW factors
 
-1. **The kill-a-pod demo** — live proof, not slideware: stop a replica
-   mid-conversation, zero messages lost or duplicated, sequence numbers
-   intact on restart.
+1. **The kill-a-pod demo, as an asserted test** — `npm run demo:failover`
+   auto-detects the socket-owning replica, stops it at message #30 of 60,
+   and asserts: 60/60 persisted exactly once, sequence numbers gap-free
+   across the pod switch, both clients reconnected once, the in-flight
+   message retried once onto the survivor, 0 duplicate deliveries. Measured
+   failover gap ≈ 2.4 s; steady-state ACK p50 14 ms.
 2. **RFC-vectored crypto** — an E2EE implementation whose every primitive is
    pinned to official test vectors in CI, with tamper/replay suites; almost
    no portfolio project does this.
@@ -85,6 +88,32 @@ probing, and an honest account of what impresses vs. what can be attacked.
   compare bug) → fixed with a regression guard.
 - ~~Sending never recorded room participation despite the documented
   contract~~ → send path now ensures membership.
+- ~~No session listing / revocation UI~~ → `GET/DELETE /user/sessions[/:id]`
+  (owner-scoped, current-session flagged, "sign out everywhere else") +
+  Active-sessions card on the profile page; 4 integration tests.
+- ~~Search was an O(room) regex scan~~ → `$text` on the compound
+  `{chatroom, message}` index ranked by score, escaped-regex fallback only
+  for partial words / symbols.
+- ~~Legacy offset-pagination branch~~ → removed; cursor-only endpoint, stray
+  `?page` is ignored (tested).
+- ~~Envelope size cap undocumented~~ → derivation comment (2000 chars → 8192B
+  bucket + tag → ~10.9 KB base64; 16 KB cap) next to the validator.
+- ~~Redis suite only ran in CI~~ → 9/9 verified locally against a real Redis
+  container.
+- ~~Graceful shutdown hung for the full 10 s grace and force-exited~~ — found
+  by the kill-a-pod run: `server.close()` waits on the reverse proxy's idle
+  keep-alive connections. Now `closeIdleConnections()` immediately and
+  `closeAllConnections()` after a 2 s drain; the pod exits cleanly.
+- ~~Failover demo was a manual eyeball~~ → `npm run demo:failover`
+  (`chat-back/src/scripts/failoverCheck.ts`) stops a pod mid-stream and
+  asserts exactly-once persistence, gap-free sequences, and exactly-once
+  receipt on the other client. It also caught that the verifier (like any
+  client) must handle `"io server disconnect"` explicitly — socket.io won't
+  auto-reconnect after a server-initiated close; the app already did.
+- nginx LB tuned for failover: `max_fails=2 fail_timeout=5s`,
+  `proxy_connect_timeout 2s`, `proxy_next_upstream` on connect errors — a
+  dead pod is sidelined in ~2 s instead of several, and retries are safe
+  because the dedup layer makes replayed sends idempotent.
 
 **Accepted and documented (defend, don't hide):**
 - **Session-granular forward secrecy** — the honest Megolm-style trade
@@ -100,22 +129,31 @@ probing, and an honest account of what impresses vs. what can be attacked.
   (no key configured, 503s gracefully); a self-hosted-LLM swap is the
   documented alternative for the target customer.
 
+**Measured, with the caveats stated up front (from the k6 + failover runs):**
+- **Hot-room fan-out is the real ceiling**: 50 users all typing in one room
+  (50× fan-out ≈ 2,900 deliveries/s) pushed one pod to p95 2.55 s; the
+  representative 10-room split met the 176 ms p95. Say it before they ask:
+  "delivery load is sends × room size, and a single Node event loop tops out
+  around a few thousand socket writes per second — the batching/Kafka
+  milestone is gated on that, not on raw message rate."
+- **IP-hash stickiness makes single-source load tests one-pod tests** —
+  Prometheus showed `backend2` at zero during both k6 runs. That's a property
+  of `ip_hash`, not a bug, but it means "2 pods" in the demo proves shared
+  state + failover, while the throughput numbers are per-pod.
+- **The `/user` rate limiter (100/15 min/IP, Redis-shared) bites load-test
+  setup** — 50 registrations per run from one IP; documented in the script.
+  Proof the limiter is cluster-wide; also a reminder that test harnesses need
+  either token reuse or an explicit bypass in non-prod.
+
 **Known gaps an interviewer could press (be ready, or fix next):**
 - **Uploads live on a shared Docker volume**, not object storage — fine for
   one org, S3+presigned URLs is the named milestone; media is also NOT E2EE
   in DMs (text envelopes only) — call it out before they do.
-- **Search is regex-scan, not a text index** — escaped (ReDoS-safe) but
-  O(room) per query; `$text` index is the next step, and E2EE DMs are
-  client-side-search-only by definition.
-- **No per-message rate limit on `/user/refresh` beyond the /user bucket**
-  and no device/session listing UI for revocation — session *storage*
-  supports it (one row per session); UI doesn't expose it yet.
-- **k6 thresholds not yet run against the scale topology in this repo's
-  history** (local Docker unavailable during the build); the script and
-  thresholds exist — run once and paste numbers into WHY-DIFFERENT.md.
-- **Legacy offset-pagination branch still in the messages endpoint** —
-  kept deliberately for rollout compatibility; delete after clients are
-  confirmed on cursors.
-- **DM envelopes cap at ~16KB ciphertext** (server structural validation);
-  fine for 2000-char texts, but the limit and its rationale should be
-  stated in the envelope validator comment.
+- **E2EE DMs are client-side-search-only** by definition (the server holds
+  ciphertext); room search uses the `$text` index. Worth stating as a
+  feature of the threat model, not a gap.
+- **`/user/refresh` shares the generic `/user` rate bucket** (100/15 min) —
+  adequate, but a dedicated tighter bucket would blunt token-guessing noise
+  further. One-line change; not done only to keep the auth ADR stable.
+- **Room text search is whole-word/stemmed** — partial matches fall back to
+  the escaped regex scan, so very short queries still cost O(room).

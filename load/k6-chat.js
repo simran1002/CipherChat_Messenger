@@ -28,6 +28,11 @@ import { Trend, Counter } from "k6/metrics";
 const BASE_URL = __ENV.BASE_URL || "http://localhost:8000";
 const VUS = parseInt(__ENV.VUS || "50");
 const DURATION = __ENV.DURATION || "60s";
+// Fan-out control. Every send is broadcast to everyone in the room, so the
+// delivery load is sends × room size. ROOMS=1 is a "hot room" stress test
+// (50 VUs → 50× fan-out ≈ 2,900 deliveries/s); ROOMS=10 spreads 50 VUs five
+// per room ≈ the documented org-wide target (~100 msg/s, realistic fan-out).
+const ROOMS = Math.max(1, parseInt(__ENV.ROOMS || "10"));
 
 const ackRtt = new Trend("chat_ack_rtt", true);
 const messagesSent = new Counter("chat_messages_sent");
@@ -52,6 +57,11 @@ export function setup() {
   const stamp = Date.now();
   const tokens = [];
 
+  // NOTE: setup registers one account per VU through /user/register, which
+  // sits behind the auth rate limiter (100 requests / 15 min per client IP,
+  // shared across replicas via Redis). Repeated runs from one IP will 429 —
+  // between runs: `redis-cli --scan --pattern 'rl:*' | xargs redis-cli del`.
+
   // One account per VU (register returns a token directly)
   for (let i = 0; i < VUS; i++) {
     const res = http.post(
@@ -67,18 +77,24 @@ export function setup() {
     tokens.push(res.json("token"));
   }
 
-  const roomRes = http.post(
-    `${BASE_URL}/chatroom`,
-    JSON.stringify({ name: `LoadTest-${stamp}` }),
-    { headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokens[0]}` } }
-  );
-  if (roomRes.status !== 200) throw new Error(`room create failed: ${roomRes.status} ${roomRes.body}`);
+  const chatroomIds = [];
+  for (let r = 0; r < ROOMS; r++) {
+    const roomRes = http.post(
+      `${BASE_URL}/chatroom`,
+      JSON.stringify({ name: `LoadTest-${stamp}-${r}` }),
+      { headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokens[0]}` } }
+    );
+    if (roomRes.status !== 200) throw new Error(`room create failed: ${roomRes.status} ${roomRes.body}`);
+    chatroomIds.push(roomRes.json("chatroom._id"));
+  }
 
-  return { tokens, chatroomId: roomRes.json("chatroom._id") };
+  return { tokens, chatroomIds };
 }
 
 export default function (data) {
   const token = data.tokens[(__VU - 1) % data.tokens.length];
+  // VUs are dealt round-robin across rooms
+  data.chatroomId = data.chatroomIds[(__VU - 1) % data.chatroomIds.length];
   const wsUrl =
     BASE_URL.replace(/^http/, "ws") +
     `/socket.io/?EIO=4&transport=websocket&token=${encodeURIComponent(token)}`;

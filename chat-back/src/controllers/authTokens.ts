@@ -57,3 +57,48 @@ export async function revokeRefreshToken(req: Request, res: Response): Promise<v
   }
   res.clearCookie(REFRESH_COOKIE, { path: "/user" });
 }
+
+// ── Session management (one RefreshToken row = one live session) ─────────────
+
+export interface SessionView {
+  id: string;
+  createdAt: Date;
+  expiresAt: Date;
+  createdByIp: string;
+  /** True for the session whose cookie made this request. */
+  current: boolean;
+}
+
+function presentedHash(req: Request): string | null {
+  const raw = (req.cookies as Record<string, string> | undefined)?.[REFRESH_COOKIE];
+  return raw ? hash(raw) : null;
+}
+
+export async function listSessions(req: Request, userId: string): Promise<SessionView[]> {
+  const current = presentedHash(req);
+  const rows = await RefreshToken.find({ user: userId, expiresAt: { $gt: new Date() } })
+    .sort({ createdAt: -1 })
+    .lean();
+  return rows.map((r) => ({
+    id: r._id.toString(),
+    createdAt: r.createdAt as Date,
+    expiresAt: r.expiresAt,
+    createdByIp: r.createdByIp ?? "",
+    current: current !== null && r.tokenHash === current,
+  }));
+}
+
+/** Revoke one session by id — scoped to the owner, so ids can't be guessed across users. */
+export async function revokeSessionById(userId: string, sessionId: string): Promise<boolean> {
+  const result = await RefreshToken.deleteOne({ _id: sessionId, user: userId });
+  return result.deletedCount === 1;
+}
+
+/** Revoke every session except the one making this request ("sign out everywhere else"). */
+export async function revokeOtherSessions(req: Request, userId: string): Promise<number> {
+  const current = presentedHash(req);
+  const filter: Record<string, unknown> = { user: userId };
+  if (current) filter.tokenHash = { $ne: current };
+  const result = await RefreshToken.deleteMany(filter);
+  return result.deletedCount;
+}

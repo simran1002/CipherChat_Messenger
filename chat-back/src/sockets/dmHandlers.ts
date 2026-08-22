@@ -5,7 +5,14 @@ import { presenceRegistry, rateLimiter } from "../shared/index.js";
 import { errMessage, logger } from "../utils/logger.js";
 import type { AppServer, AppSocket, DirectMessagePayload, DmEnvelope, DmMessageAck } from "./events.js";
 
-const MAX_CT_BYTES = 16 * 1024; // padded 2000-char message ≈ 11KB base64
+/**
+ * Ciphertext cap. Derivation: max plaintext 2000 chars → ≤8000 UTF-8 bytes
+ * → padded to the next 256-byte bucket (≤8192) + 16-byte GCM tag → base64
+ * inflates 4/3 → ~10.9 KB. 16 KB leaves headroom for a future larger bucket
+ * without letting the relay become an arbitrary blob channel. Raising this
+ * requires changing PAD_BUCKET / the plaintext limit on the client, together.
+ */
+const MAX_CT_BYTES = 16 * 1024;
 
 /**
  * Structural validation of an E2EE envelope. The server cannot (and must

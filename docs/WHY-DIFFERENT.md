@@ -45,6 +45,35 @@ Single-org deployments:
 | History growth | ~10 M messages/yr, tens of GB | Cursor pagination on `_id` (offset/skip degraded linearly); `{chatroom, sequenceNumber}` and `{chatroom, createdAt}` indexes |
 | Redis working set | < 1 GB | Single Redis node; Cluster/Sentinel named as the growth path |
 
+### Measured (k6, 50 VUs × 60 s, via the nginx LB on the 2-replica compose stack)
+
+Environment: one Windows laptop running Docker Desktop with k6, nginx, both
+backend pods, MongoDB, and Redis co-located — a worst case for latency, not
+a benchmark rig. Numbers are client-observed ACK round-trips (send → server
+persisted + ACKed), i.e. the full delivery-guarantee path.
+
+| Scenario | Sends | Fan-out | ACK p50 | ACK p95 | Checks | Verdict |
+|---|---|---|---|---|---|---|
+| **Representative** — 50 users across 10 rooms (`ROOMS=10`) ≈ the documented org-wide target | 5,700 (~59/s) | 5× (≈515 deliveries/s) | 19 ms | **176 ms** | 100 % | **p95 < 250 ms threshold met**; server-side avg ≈ 40 ms, 98 % ≤ 250 ms |
+| **Hot room** — all 50 users in one room (`ROOMS=1`) | 5,700 (~57/s) | 50× (≈2,900 deliveries/s) | 586 ms | 2.55 s | 100 % | Threshold missed — honest stress number: one Node event loop doing ~5k socket writes/s + adapter publishes; server-side avg ≈ 700 ms |
+
+Two findings from running it, both now documented as engineering facts
+rather than hidden:
+
+- **Both runs landed on a single pod.** nginx `ip_hash` pins a client IP to
+  one upstream, and a k6 container is one IP — so a single-source load test
+  against an IP-hashed LB is a one-pod test by construction (Prometheus
+  confirmed: `backend2` processed 0 messages). Real user populations spread
+  by IP; load generators don't. The per-pod ceiling above is therefore the
+  honest single-pod number, and horizontal headroom comes from IP diversity
+  — or from a websocket-only deployment with `least_conn` (trade-off: the
+  long-polling fallback then needs another stickiness mechanism).
+- **Fan-out, not message rate, is the cost driver.** Delivery load = sends ×
+  room size. The scale assumption "≤ 500 sockets/pod, ~200 msg/s org-wide"
+  holds only with realistic room sizes; a 50-person room where everyone
+  types at once is the case that would justify the Kafka/batching milestone
+  below.
+
 **What changes at 100× (and is deliberately out of scope):** Kafka in front
 of persistence, room sharding, a presence service split out of the message
 path, S3-backed media, read replicas. Each is listed in the scaling section
@@ -56,8 +85,11 @@ of the architecture doc with the trigger that would justify it.
    an integration test that double-sends the same UUID and asserts one row.
 2. A crypto implementation pinned to RFC 7748 / RFC 8032 / RFC 5869 / NIST
    GCM vectors, with tamper, replay, out-of-order, and rotation tests.
-3. A kill-a-pod demo script (`docker-compose.scale.yml`) where the surviving
-   replica carries the conversation without a lost message.
+3. A kill-a-pod verifier (`npm run demo:failover` against
+   `docker-compose.scale.yml`) that stops the socket-owning replica
+   mid-stream and asserts the outcome — last run: 60/60 exactly once,
+   gap-free sequences across the pod switch, one reconnect per client, one
+   in-flight retry, ~2.4 s failover gap, zero duplicates.
 4. 190+ automated tests across unit / integration / crypto KAT layers, CI
    with a real Redis service container, k6 load script with thresholds.
 5. ADRs where every major choice names the alternative it rejected and the

@@ -113,7 +113,7 @@ describe("cursor pagination, unread counts, and mentions", () => {
 
   // ── Cursor pagination ───────────────────────────────────────────────────────
 
-  it("pages 120 messages newest-first in 50s via ?before cursors, and keeps the legacy page mode", async () => {
+  it("pages 120 messages newest-first in 50s via ?before cursors", async () => {
     const userA = await createUserWithToken();
     const room = await Chatroom.create({ name: `CursorRoom-${Date.now()}` });
     const seeded = await seedMessages(room.id as string, userA.userId, 120);
@@ -154,18 +154,15 @@ describe("cursor pagination, unread counts, and mentions", () => {
     expect(page3.cursor.hasMore).toBe(false);
     expect(page3.cursor.nextCursor).toBeNull();
 
-    // Legacy offset mode still answers with the old pagination envelope
-    const legacyRes = await api(`/chatroom/${room.id}/messages?page=1&limit=50`, {
+    // A stray legacy ?page param is ignored — cursor envelope, newest page
+    const strayRes = await api(`/chatroom/${room.id}/messages?page=1&limit=50`, {
       token: userA.token,
     });
-    expect(legacyRes.status).toBe(200);
-    const legacy = (await legacyRes.json()) as {
-      messages: Array<{ sequenceNumber: number }>;
-      pagination: { page: number; limit: number; total: number; pages: number };
-    };
-    expect(legacy.pagination).toEqual({ page: 1, limit: 50, total: 120, pages: 3 });
-    expect(legacy.messages).toHaveLength(50);
-    expect(legacy.messages[0]?.sequenceNumber).toBe(1); // oldest-first in legacy mode
+    expect(strayRes.status).toBe(200);
+    const stray = (await strayRes.json()) as CursorPage & { pagination?: unknown };
+    expect(stray.pagination).toBeUndefined();
+    expect(stray.cursor.hasMore).toBe(true);
+    expect(stray.messages[0]?.sequenceNumber).toBe(71);
   });
 
   // ── Unread counts (RoomReadState watermark) ─────────────────────────────────

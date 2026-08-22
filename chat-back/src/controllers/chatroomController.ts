@@ -89,12 +89,13 @@ export async function getAllChatrooms(req: Request, res: Response): Promise<void
 }
 
 /**
- * Message history. Two modes:
- * - Cursor (preferred): ?before=<messageId>&limit=50 — returns the `limit`
- *   messages older than the cursor, ascending, plus nextCursor/hasMore.
- *   ObjectIds are time-ordered, so _id works for rows that predate sequence
- *   numbers (offset/skip degraded linearly with history depth).
- * - Legacy: ?page=N — kept until every client is on cursors.
+ * Message history — cursor pagination only.
+ * ?before=<messageId>&limit=50 returns the `limit` messages older than the
+ * cursor, ascending, plus nextCursor/hasMore. No cursor = newest page.
+ * ObjectIds are time-ordered, so `_id` works for rows that predate sequence
+ * numbers, and an indexed `$lt` seek is O(log n) regardless of history depth
+ * (the former offset/skip mode degraded linearly and was removed once all
+ * clients moved to cursors).
  */
 export async function getChatroomMessages(req: Request, res: Response): Promise<void> {
   const { chatroomId } = req.params as { chatroomId: string };
@@ -103,50 +104,29 @@ export async function getChatroomMessages(req: Request, res: Response): Promise<
 
   const chatroom = await assertRoomAccess(chatroomId, req.payload!.id);
 
-  if (before !== undefined || req.query.page === undefined) {
-    // Cursor mode (also the default when neither param is given)
-    const filter: Record<string, unknown> = { chatroom: chatroomId };
-    if (before) {
-      assertObjectId(before, "cursor");
-      filter._id = { $lt: new mongoose.Types.ObjectId(before) };
-    }
-
-    const rows = await Message.find(filter)
-      .populate("user", "name email dp")
-      .sort({ _id: -1 })
-      .limit(limit + 1) // one extra row = "is there more?"
-      .lean();
-
-    const hasMore = rows.length > limit;
-    const pageRows = rows.slice(0, limit).reverse(); // ascending for rendering
-
-    res.json({
-      messages: pageRows,
-      chatroom: { name: chatroom.name, id: chatroom._id, isPrivate: chatroom.isPrivate },
-      cursor: {
-        nextCursor: hasMore && pageRows.length ? String(pageRows[0]!._id) : null,
-        hasMore,
-        limit,
-      },
-    });
-    return;
+  const filter: Record<string, unknown> = { chatroom: chatroomId };
+  if (before) {
+    assertObjectId(before, "cursor");
+    filter._id = { $lt: new mongoose.Types.ObjectId(before) };
   }
 
-  // Legacy offset mode
-  const page = parseInt(String(req.query.page)) || 1;
-  const skip = (page - 1) * limit;
-  const messages = await Message.find({ chatroom: chatroomId })
+  const rows = await Message.find(filter)
     .populate("user", "name email dp")
-    .sort({ createdAt: 1 })
-    .skip(skip)
-    .limit(limit)
+    .sort({ _id: -1 })
+    .limit(limit + 1) // one extra row = "is there more?"
     .lean();
-  const total = await Message.countDocuments({ chatroom: chatroomId });
+
+  const hasMore = rows.length > limit;
+  const pageRows = rows.slice(0, limit).reverse(); // ascending for rendering
 
   res.json({
-    messages,
+    messages: pageRows,
     chatroom: { name: chatroom.name, id: chatroom._id, isPrivate: chatroom.isPrivate },
-    pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    cursor: {
+      nextCursor: hasMore && pageRows.length ? String(pageRows[0]!._id) : null,
+      hasMore,
+      limit,
+    },
   });
 }
 
@@ -219,16 +199,33 @@ export async function searchMessages(req: Request, res: Response): Promise<void>
   await assertRoomAccess(chatroomId, req.payload!.id);
   if (!q.trim()) throw HttpError.badRequest("Search query is required.");
 
-  const messages = await Message.find({
-    chatroom: chatroomId,
-    // Escaped — raw user input in $regex was a ReDoS vector
-    message: { $regex: escapeRegex(q.trim()), $options: "i" },
-  })
+  const term = q.trim();
+
+  // Primary: the compound text index {chatroom, message:"text"} — stemmed,
+  // whole-word, O(index) rather than an O(room) regex scan. Ranked by score.
+  let messages = await Message.find(
+    { chatroom: chatroomId, $text: { $search: term } },
+    { score: { $meta: "textScore" } }
+  )
     .populate("user", "name dp")
-    .sort({ createdAt: -1 })
+    .sort({ score: { $meta: "textScore" }, createdAt: -1 })
     .limit(50)
     .lean();
-  res.json({ messages, query: q.trim() });
+
+  // Fallback: partial words / stop-words / symbols that text search can't
+  // match. Escaped — raw user input in $regex was a ReDoS vector.
+  if (messages.length === 0) {
+    messages = await Message.find({
+      chatroom: chatroomId,
+      message: { $regex: escapeRegex(term), $options: "i" },
+    })
+      .populate("user", "name dp")
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean();
+  }
+
+  res.json({ messages, query: term });
 }
 
 export async function toggleReaction(req: Request, res: Response): Promise<void> {

@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, type ChangeEvent } from "react";
+import { useState, useEffect, useRef, useCallback, type ChangeEvent } from "react";
 import { motion } from "framer-motion";
-import { CameraIcon, CheckIcon, PencilIcon } from "@heroicons/react/24/outline";
+import { CameraIcon, CheckIcon, PencilIcon, ComputerDesktopIcon, XMarkIcon } from "@heroicons/react/24/outline";
 import { LockClosedIcon } from "@heroicons/react/24/solid";
 import api, { getApiUrl } from "../services/api";
 import { makeToast } from "../utils/toast";
@@ -10,6 +10,123 @@ import type { AuthUser } from "../types";
 interface ProfilePageProps {
   user: AuthUser | null;
   setUser: (u: AuthUser) => void;
+}
+
+interface SessionRow {
+  id: string;
+  createdAt: string;
+  expiresAt: string;
+  createdByIp: string;
+  current: boolean;
+}
+
+/**
+ * Active sessions — one row per signed-in browser (each is a refresh-token
+ * row server-side). Revoking a row kills that browser's ability to refresh;
+ * its 15-minute access token expires on its own.
+ */
+function ActiveSessions() {
+  const [sessions, setSessions] = useState<SessionRow[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await api.get("/user/sessions");
+      setSessions((res.data as { sessions: SessionRow[] }).sessions);
+    } catch {
+      setSessions([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const revoke = async (id: string) => {
+    setBusy(id);
+    try {
+      await api.delete(`/user/sessions/${id}`);
+      makeToast("success", "Session signed out");
+      await load();
+    } catch {
+      makeToast("error", "Failed to revoke session");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const revokeOthers = async () => {
+    setBusy("others");
+    try {
+      const res = await api.delete("/user/sessions");
+      makeToast("success", (res.data as { message?: string }).message || "Signed out elsewhere");
+      await load();
+    } catch {
+      makeToast("error", "Failed to sign out other sessions");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (sessions === null) return null;
+  const others = sessions.filter((s) => !s.current).length;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.1 }}
+      className="w-full max-w-md mt-4 bg-gray-800/80 backdrop-blur-sm border border-gray-700/50 rounded-3xl shadow-2xl p-5"
+    >
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+          <ComputerDesktopIcon className="w-4 h-4 text-violet-400" />
+          Active sessions
+          <span className="text-xs text-gray-500">({sessions.length})</span>
+        </h3>
+        {others > 0 && (
+          <button
+            onClick={revokeOthers}
+            disabled={busy !== null}
+            className="text-xs px-3 py-1.5 rounded-lg bg-rose-600/20 text-rose-300 hover:bg-rose-600/30 border border-rose-500/30 transition-colors disabled:opacity-50"
+          >
+            Sign out everywhere else
+          </button>
+        )}
+      </div>
+      <ul className="space-y-2">
+        {sessions.map((s) => (
+          <li
+            key={s.id}
+            className="flex items-center justify-between gap-3 rounded-xl bg-gray-900/50 border border-gray-700/40 px-3 py-2"
+          >
+            <div className="min-w-0">
+              <p className="text-xs text-gray-200 truncate">
+                {s.current ? (
+                  <span className="text-emerald-400 font-medium">This browser</span>
+                ) : (
+                  <span>Signed in {new Date(s.createdAt).toLocaleString()}</span>
+                )}
+              </p>
+              <p className="text-[11px] text-gray-500 truncate">
+                {s.createdByIp || "unknown IP"} · expires {new Date(s.expiresAt).toLocaleDateString()}
+              </p>
+            </div>
+            {!s.current && (
+              <button
+                onClick={() => revoke(s.id)}
+                disabled={busy !== null}
+                title="Sign out this session"
+                className="p-1.5 rounded-lg text-gray-400 hover:text-rose-300 hover:bg-rose-600/10 transition-colors disabled:opacity-50"
+              >
+                <XMarkIcon className="w-4 h-4" />
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+    </motion.div>
+  );
 }
 
 const ProfilePage = ({ setUser }: ProfilePageProps) => {
@@ -72,7 +189,7 @@ const ProfilePage = ({ setUser }: ProfilePageProps) => {
   const dpSrc = preview || (profile.dp ? (profile.dp.startsWith("http") ? profile.dp : `${getApiUrl()}${profile.dp}`) : null);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-950/30 to-gray-900 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-950/30 to-gray-900 flex flex-col items-center justify-center p-4">
       <motion.div
         initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0 }}
@@ -149,6 +266,7 @@ const ProfilePage = ({ setUser }: ProfilePageProps) => {
           )}
         </div>
       </motion.div>
+      <ActiveSessions />
     </div>
   );
 };

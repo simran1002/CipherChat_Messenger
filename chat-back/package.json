@@ -9,7 +9,8 @@
     "test": "vitest run",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "demo:failover": "tsx src/scripts/failoverCheck.ts"
   },
   "engines": {
     "node": ">=18.0.0"

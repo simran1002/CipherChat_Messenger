@@ -71,7 +71,8 @@ multi-replica deployments (see [ADR-0002](docs/adr/0002-redis-behind-interfaces.
 ```bash
 cd chat-back && npm test    # unit + socket integration (mongodb-memory-server)
 cd chat-front && npm test   # hooks, offline queue (fake-indexeddb), crypto KATs
-k6 run load/k6-chat.js      # p95 ACK round-trip < 250ms @ ~100 msg/s
+k6 run load/k6-chat.js      # threshold p95 ACK < 250ms; measured 176ms @ 59 msg/s, 10 rooms (see docs/WHY-DIFFERENT.md)
+cd chat-back && npm run demo:failover   # stops the socket-owning pod mid-stream, asserts zero loss / zero dupes
 ```
 
 CI (GitHub Actions): typecheck, lint, full test suites (the Redis

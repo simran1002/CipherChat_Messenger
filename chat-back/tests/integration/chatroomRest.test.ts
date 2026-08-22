@@ -66,7 +66,7 @@ describe("chatroom REST endpoints", () => {
     expect(res.status).toBe(400);
   });
 
-  it("returns paginated messages with the documented shape", async () => {
+  it("returns cursor-paginated messages with the documented shape", async () => {
     const room = await Chatroom.create({ name: `PageRoom-${Date.now()}` });
     for (let i = 0; i < 3; i++) {
       await Message.create({
@@ -77,16 +77,17 @@ describe("chatroom REST endpoints", () => {
       });
     }
 
-    const res = await api(`/chatroom/${room.id}/messages?page=1&limit=2`, { token: owner.token });
+    const res = await api(`/chatroom/${room.id}/messages?limit=2`, { token: owner.token });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      messages: Array<{ message: string; user: { name: string } }>;
+      messages: Array<{ message: string; sequenceNumber: number; user: { name: string } }>;
       chatroom: { name: string; id: string };
-      pagination: { page: number; limit: number; total: number; pages: number };
+      cursor: { nextCursor: string | null; hasMore: boolean; limit: number };
     };
-    expect(body.messages).toHaveLength(2);
+    // Newest page, ascending → seq 2,3; cursor points at the oldest returned row
+    expect(body.messages.map((m) => m.sequenceNumber)).toEqual([2, 3]);
     expect(body.chatroom.name).toBe(room.name);
-    expect(body.pagination).toEqual({ page: 1, limit: 2, total: 3, pages: 2 });
+    expect(body.cursor).toEqual({ nextCursor: expect.any(String), hasMore: true, limit: 2 });
   });
 
   it("search with regex metacharacters returns 200 and [] (ReDoS guard)", async () => {

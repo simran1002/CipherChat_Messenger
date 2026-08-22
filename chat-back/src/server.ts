@@ -65,10 +65,21 @@ async function main(): Promise<void> {
     forceExit.unref();
 
     try {
+      // Stop accepting + tell every socket to go (clients reconnect to a
+      // surviving replica through the LB)
       await io.close();
-      await new Promise<void>((resolve, reject) =>
+      // server.close() waits for keep-alive connections to drain on their own —
+      // behind a reverse proxy those idle upstream connections can outlive the
+      // grace period (observed: a 10s hang → forced exit). Close idle ones now,
+      // and force-close anything still open after a short drain window.
+      server.closeIdleConnections();
+      const closed = new Promise<void>((resolve, reject) =>
         server.close((err) => (err ? reject(err) : resolve()))
       );
+      const drain = setTimeout(() => server.closeAllConnections(), 2_000);
+      drain.unref();
+      await closed;
+      clearTimeout(drain);
       stopSharedModules();
       await closeRedis();
       await mongoose.disconnect();
