@@ -13,7 +13,9 @@ interface SensitivePattern extends SensitiveMatch {
 const PATTERNS: SensitivePattern[] = [
   {
     type: "OTP / Verification code",
-    regex: /\b(\d{4,8})\b.*(?:otp|code|verify|pin|token)/i,
+    // Digits and the keyword in EITHER order — "123456 is your OTP" and
+    // "Your OTP is 123456" both match (the old pattern only caught the first)
+    regex: /\b\d{4,8}\b[\s\S]{0,40}\b(?:otp|code|verify|verification|pin|token)\b|\b(?:otp|code|verify|verification|pin|token)\b[\s\S]{0,40}\b\d{4,8}\b/i,
     suggestion: "Sharing OTPs can compromise your account. Consider calling instead.",
   },
   {
@@ -28,7 +30,10 @@ const PATTERNS: SensitivePattern[] = [
   },
   {
     type: "API key",
-    regex: /(?:api[_-]?key|secret[_-]?key|access[_-]?token)\s*[:=]\s*\S{16,}/i,
+    // Labeled keys (api_key=…) OR bare well-known key shapes: OpenAI/Anthropic
+    // sk-…, GitHub gh[pousr]_…, AWS AKIA…, Slack xox…, generic Bearer tokens
+    regex:
+      /(?:api[_-]?key|secret[_-]?key|access[_-]?token)\s*[:=]\s*\S{16,}|\b(?:sk|pk)-[A-Za-z0-9_-]{16,}\b|\bgh[pousr]_[A-Za-z0-9]{20,}\b|\bAKIA[0-9A-Z]{16}\b|\bxox[baprs]-[A-Za-z0-9-]{10,}\b|\bBearer\s+[A-Za-z0-9._~+/=-]{20,}/i,
     suggestion: "API keys should never be shared in chat — revoke and rotate it immediately.",
   },
   {

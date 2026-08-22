@@ -1,4 +1,5 @@
 import { Message } from "../models/Message.js";
+import { RoomReadState } from "../models/RoomReadState.js";
 import { User } from "../models/User.js";
 import { dedup, metrics, seqCounter } from "../shared/index.js";
 import { errMessage, logger } from "../utils/logger.js";
@@ -30,6 +31,15 @@ export function registerDeliveryHandlers(io: AppServer, socket: AppSocket): void
           upToSequence: upToSequence ?? null,
           readAt: new Date(),
         });
+      }
+
+      // Advance the unread-badge watermark (dashboard counts hang off this)
+      if (upToSequence) {
+        await RoomReadState.updateOne(
+          { user: userId, chatroom: chatroomId },
+          { $max: { lastReadSequence: upToSequence } },
+          { upsert: true }
+        ).catch(() => {});
       }
     } catch (err) {
       logger.error("markRead error", { error: errMessage(err) });

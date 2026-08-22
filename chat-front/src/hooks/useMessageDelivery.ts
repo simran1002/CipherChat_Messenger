@@ -28,12 +28,25 @@ export interface SendInput {
   replyTo?: ReplyToRef;
   expiresIn?: number;
   clientMessageId?: string;
+  /** User ids selected via the composer's @mention autocomplete (max 10). */
+  mentions?: string[];
 }
 
 export type SendResult =
   | { ok: true; messageId?: string; clientMessageId: string }
-  | { ok: false; error: "rate_limited" | "invalid_message" | "server_error" }
+  | { ok: false; error: "rate_limited" | "invalid_message" | "forbidden" | "server_error" }
   | { ok?: false; queued: true; clientMessageId: string };
+
+/** Ack errors that must never be retried — the server's answer won't change. */
+const TERMINAL_ACK_ERRORS = ["rate_limited", "invalid_message", "forbidden"] as const;
+type TerminalAckError = (typeof TERMINAL_ACK_ERRORS)[number];
+
+function terminalAckError(ack: MessageAck | undefined): TerminalAckError | null {
+  if (!ack || ack.ok || !ack.error) return null;
+  return (TERMINAL_ACK_ERRORS as readonly string[]).includes(ack.error)
+    ? (ack.error as TerminalAckError)
+    : null;
+}
 
 export function useMessageDelivery(socket: AppSocket | null, chatroomId: string | undefined) {
   const [pendingCount, setPendingCount] = useState(0);
@@ -72,12 +85,16 @@ export function useMessageDelivery(socket: AppSocket | null, chatroomId: string 
           socket
             .timeout(ACK_TIMEOUT_MS)
             .emit("chatroomMessage", payload, (err: Error | null, ack?: MessageAck) => {
+              const terminal = err ? null : terminalAckError(ack);
               if (!err && ack?.ok) {
                 removePending(clientMessageId);
                 resolve({ ok: true, messageId: ack.messageId, clientMessageId });
-              } else if (!err && ack?.error === "rate_limited") {
+              } else if (terminal) {
+                // rate_limited / invalid_message / forbidden — retrying can't
+                // succeed, so surface the error immediately. Only timeouts
+                // (err from socket.timeout) and server_error acks retry.
                 removePending(clientMessageId);
-                resolve({ ok: false, error: "rate_limited" });
+                resolve({ ok: false, error: terminal });
               } else if (retries < MAX_RETRIES) {
                 retries++;
                 const delay = jitter(BASE_DELAY_MS * Math.pow(2, retries - 1));

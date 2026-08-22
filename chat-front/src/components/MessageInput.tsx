@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from "react";
-import type { ChangeEvent, KeyboardEvent, MouseEvent, RefObject } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import type { ChangeEvent, KeyboardEvent, MouseEvent, MutableRefObject, RefObject } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   PaperAirplaneIcon,
@@ -18,7 +18,29 @@ import SelfDestructPicker from "./SelfDestructPicker";
 import { detectSensitiveData } from "./SensitiveDataDetector";
 import api from "../services/api";
 import { makeToast } from "../utils/toast";
+import { stringToColor, getInitials } from "../utils/helpers";
 import type { ReplyToRef } from "../types";
+
+const MAX_MENTIONS = 10;
+
+/** Room member option for the @mention autocomplete. */
+interface MentionMember {
+  _id: string;
+  name: string;
+  dp?: string;
+}
+
+/**
+ * Find an in-progress "@query" immediately before the cursor.
+ * The "@" must be at the start of the text or preceded by whitespace.
+ */
+function detectMentionContext(text: string, cursor: number): { start: number; query: string } | null {
+  const before = text.slice(0, cursor);
+  const match = /(^|\s)@([^\s@]*)$/.exec(before);
+  if (!match) return null;
+  const query = match[2] ?? "";
+  return { start: cursor - query.length - 1, query };
+}
 
 interface ToneConfigEntry {
   label: string | null;
@@ -69,6 +91,10 @@ interface MessageInputProps {
   onCancelReply: () => void;
   expiresIn: number | null;
   onExpiresInChange: (expiresIn: number | null) => void;
+  /** Enables the @mention autocomplete (members are lazy-fetched from this room). */
+  chatroomId?: string;
+  /** Reports the userIds currently mentioned in the draft (deduped, max 10). */
+  onMentionsChange?: (userIds: string[]) => void;
 }
 
 const MessageInput = ({
@@ -86,6 +112,8 @@ const MessageInput = ({
   onCancelReply,
   expiresIn,
   onExpiresInChange,
+  chatroomId,
+  onMentionsChange,
 }: MessageInputProps) => {
   const [showEmoji, setShowEmoji] = useState(false);
   const [showVoice, setShowVoice] = useState(false);
@@ -95,6 +123,98 @@ const MessageInput = ({
   const [toneOverride, setToneOverride] = useState<string | null>(null); // user accepted the suggestion
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const toneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── @mention autocomplete state ────────────────────────────────────────────
+  const [mentionMembers, setMentionMembers] = useState<MentionMember[] | null>(null); // null = not fetched yet
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState("");
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const mentionStartRef = useRef(0); // index of the "@" in the current context
+  const mentionEndRef = useRef(0); // cursor position at detection time
+  const membersLoadingRef = useRef(false);
+  const membersFetchedRef = useRef(false);
+  const trackedMentionsRef = useRef<Array<{ id: string; name: string }>>([]);
+  const lastEmittedMentionsRef = useRef("");
+  const localInputRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const setTextareaRef = (el: HTMLTextAreaElement | null) => {
+    localInputRef.current = el;
+    if (inputRef) (inputRef as MutableRefObject<HTMLTextAreaElement | null>).current = el;
+  };
+
+  const ensureMembersLoaded = useCallback(async () => {
+    if (!chatroomId || membersFetchedRef.current || membersLoadingRef.current) return;
+    membersLoadingRef.current = true;
+    try {
+      const res = await api.get(`/chatroom/${chatroomId}/members`);
+      const rows = (res.data as { members?: Array<{ user: MentionMember }> }).members ?? [];
+      setMentionMembers(rows.map((m) => m.user).filter((u): u is MentionMember => Boolean(u && u._id && u.name)));
+      membersFetchedRef.current = true;
+    } catch {
+      // Autocomplete is best-effort — fail silently, retry on next "@"
+    } finally {
+      membersLoadingRef.current = false;
+    }
+  }, [chatroomId]);
+
+  const updateMentionState = useCallback(
+    (text: string, cursor: number) => {
+      if (!chatroomId) return;
+      const ctx = detectMentionContext(text, cursor);
+      if (ctx) {
+        mentionStartRef.current = ctx.start;
+        mentionEndRef.current = cursor;
+        setMentionQuery(ctx.query);
+        setMentionIndex(0);
+        setMentionOpen(true);
+        void ensureMembersLoaded();
+      } else {
+        setMentionOpen(false);
+      }
+    },
+    [chatroomId, ensureMembersLoaded]
+  );
+
+  const filteredMentions = mentionOpen
+    ? (mentionMembers ?? [])
+        .filter((m) => m.name.toLowerCase().includes(mentionQuery.toLowerCase()))
+        .slice(0, 8)
+    : [];
+
+  const selectMention = (member: MentionMember) => {
+    const start = mentionStartRef.current;
+    const end = mentionEndRef.current;
+    const insert = `@${member.name} `;
+    const newValue = value.slice(0, start) + insert + value.slice(end);
+    trackedMentionsRef.current = [...trackedMentionsRef.current, { id: member._id, name: member.name }];
+    onChange({ target: { value: newValue } });
+    setMentionOpen(false);
+    const caret = start + insert.length;
+    setTimeout(() => {
+      const el = localInputRef.current;
+      if (el) {
+        el.focus();
+        el.setSelectionRange(caret, caret);
+      }
+    }, 0);
+  };
+
+  // Drop tracked mentions whose "@Name" no longer appears, then report ids
+  // (deduped, capped) to the parent.
+  useEffect(() => {
+    if (!onMentionsChange) return;
+    trackedMentionsRef.current = trackedMentionsRef.current.filter((m) => value.includes(`@${m.name}`));
+    const ids: string[] = [];
+    for (const m of trackedMentionsRef.current) {
+      if (!ids.includes(m.id)) ids.push(m.id);
+    }
+    const capped = ids.slice(0, MAX_MENTIONS);
+    const key = capped.join(",");
+    if (key !== lastEmittedMentionsRef.current) {
+      lastEmittedMentionsRef.current = key;
+      onMentionsChange(capped);
+    }
+  }, [value, onMentionsChange]);
 
   // Debounced tone + sensitive check
   useEffect(() => {
@@ -297,12 +417,71 @@ const MessageInput = ({
           )}
         </div>
 
+        {/* @mention autocomplete */}
+        {mentionOpen && (mentionMembers === null || filteredMentions.length > 0) && (
+          <div className="absolute bottom-full left-3 right-3 mb-1 z-50 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl overflow-hidden">
+            {mentionMembers === null ? (
+              <p className="px-3 py-2.5 text-xs text-gray-500">Loading members…</p>
+            ) : (
+              <ul className="max-h-56 overflow-y-auto py-1" role="listbox" aria-label="Mention a member">
+                {filteredMentions.map((m, i) => (
+                  <li key={m._id} role="option" aria-selected={i === mentionIndex}>
+                    <button
+                      type="button"
+                      onMouseDown={(e) => { e.preventDefault(); selectMention(m); }}
+                      onMouseEnter={() => setMentionIndex(i)}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors ${
+                        i === mentionIndex ? "bg-violet-600/30" : "hover:bg-gray-700/60"
+                      }`}
+                    >
+                      <div
+                        className="w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-semibold shrink-0"
+                        style={{ background: `linear-gradient(135deg, ${stringToColor(m.name)}, #8b5cf6)` }}
+                      >
+                        {getInitials(m.name)}
+                      </div>
+                      <span className="text-sm text-gray-200 truncate">{m.name}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
         {/* Text input */}
         <textarea
-          ref={inputRef}
+          ref={setTextareaRef}
           value={value}
-          onChange={onChange}
+          onChange={(e: ChangeEvent<HTMLTextAreaElement>) => {
+            onChange(e);
+            updateMentionState(e.target.value, e.target.selectionStart ?? e.target.value.length);
+          }}
+          onClick={(e) => {
+            const el = e.currentTarget;
+            updateMentionState(el.value, el.selectionStart ?? el.value.length);
+          }}
           onKeyDown={(e) => {
+            if (mentionOpen) {
+              if (e.key === "Escape") { e.preventDefault(); setMentionOpen(false); return; }
+              if (filteredMentions.length > 0) {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setMentionIndex((i) => (i + 1) % filteredMentions.length);
+                  return;
+                }
+                if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setMentionIndex((i) => (i - 1 + filteredMentions.length) % filteredMentions.length);
+                  return;
+                }
+                if (e.key === "Enter" || e.key === "Tab") {
+                  e.preventDefault();
+                  selectMention(filteredMentions[mentionIndex] ?? filteredMentions[0]!);
+                  return;
+                }
+              }
+            }
             if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(e); }
           }}
           onInput={onTyping}

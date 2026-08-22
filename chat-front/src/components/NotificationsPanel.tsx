@@ -2,13 +2,15 @@ import { useRef, useEffect } from "react";
 import { BellIcon, CheckIcon } from "@heroicons/react/24/outline";
 import { formatTime } from "../utils/helpers";
 
-/** In-memory DM notification row built by Header from `dmNotification` socket events. */
+/** In-memory notification row built by Header from `dmNotification` / `mentionNotification` socket events. */
 export interface NotificationItem {
   id: number;
   from: string;
   message: string;
   room: string;
   conversationId?: string;
+  /** Present on @mention notifications — makes the row navigate to the room. */
+  chatroomId?: string;
   createdAt: string;
   read: boolean;
 }
@@ -17,9 +19,11 @@ interface NotificationsPanelProps {
   notifications: NotificationItem[];
   onMarkAllRead: () => void;
   onClose: () => void;
+  /** Optional row click handler (used for mention rows that navigate). */
+  onItemClick?: (n: NotificationItem) => void;
 }
 
-const NotificationsPanel = ({ notifications, onMarkAllRead, onClose }: NotificationsPanelProps) => {
+const NotificationsPanel = ({ notifications, onMarkAllRead, onClose, onItemClick }: NotificationsPanelProps) => {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -53,7 +57,13 @@ const NotificationsPanel = ({ notifications, onMarkAllRead, onClose }: Notificat
           <div className="py-8 text-center text-gray-500 text-sm">No notifications</div>
         ) : (
           notifications.map((n) => (
-            <div key={n.id} className={`px-4 py-3 border-b border-gray-700/50 ${!n.read ? "bg-violet-900/20" : ""}`}>
+            <div
+              key={n.id}
+              onClick={onItemClick && n.chatroomId ? () => onItemClick(n) : undefined}
+              className={`px-4 py-3 border-b border-gray-700/50 ${!n.read ? "bg-violet-900/20" : ""} ${
+                onItemClick && n.chatroomId ? "cursor-pointer hover:bg-gray-700/50 transition-colors" : ""
+              }`}
+            >
               <div className="flex items-start gap-2">
                 {!n.read && <span className="w-2 h-2 bg-violet-400 rounded-full mt-1.5 shrink-0" />}
                 <div className="flex-1 min-w-0">

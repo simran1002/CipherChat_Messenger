@@ -42,6 +42,8 @@ const messageSchema = new Schema(
       senderName: { type: String, default: "" },
     },
     reactions: { type: [reactionSchema], default: [] },
+    // @mentions — user ids referenced by the composer's autocomplete
+    mentions: { type: [{ type: Schema.Types.ObjectId, ref: "User" }], default: [] },
     pinned: { type: Boolean, default: false },
     edited: { type: Boolean, default: false },
     deleted: { type: Boolean, default: false },

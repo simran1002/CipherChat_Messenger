@@ -1,5 +1,13 @@
-import React, { useState } from "react";
+import React, {
+  forwardRef,
+  useCallback,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   PencilIcon,
   TrashIcon,
@@ -14,6 +22,21 @@ import { stringToColor, getInitials, formatTime, formatDateDivider } from "../ut
 import { getApiUrl } from "../services/api";
 import TranslateButton from "./TranslateButton";
 import type { ChatMessage, DeliveryState, ReactionEntry, ReplyToRef } from "../types";
+
+/*
+ * NOTE on animations: this list is virtualized with @tanstack/react-virtual.
+ * framer-motion `layout` and AnimatePresence exit animations were removed from
+ * the message rows — they animate rows to positions the virtualizer has already
+ * re-assigned (rows are absolutely positioned via translateY and unmount as
+ * they leave the overscan window), causing rows to fly across the viewport and
+ * fighting dynamic row measurement. A simple opacity mount fade is kept; the
+ * hover-toolbar AnimatePresence is kept too since it never affects row height.
+ * Virtualization (smooth scrolling through thousands of messages) is the point
+ * of this trade-off.
+ */
+
+/** Messages may carry mention'd user ids (see ChatroomMessagePayload.mentions). */
+type MentionableMessage = ChatMessage & { mentions?: string[] };
 
 interface AvatarProps {
   name: string;
@@ -145,6 +168,30 @@ const DeliveryTick = ({ msg, deliveryStatus }: DeliveryTickProps) => {
   return <span className="text-[10px] opacity-50" title="Sent">✓</span>;
 };
 
+/** Name-ish @mention token: "@" + letter, then letters/digits/spaces/_/- (≤31 chars total). */
+const MENTION_RE = /@[A-Za-z][A-Za-z0-9 _-]{0,30}/g;
+
+/** Wraps @Name tokens in a highlighted span; plain text is returned untouched. */
+const renderTextWithMentions = (text: string): React.ReactNode => {
+  if (!text.includes("@")) return text;
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  let i = 0;
+  MENTION_RE.lastIndex = 0;
+  for (let m = MENTION_RE.exec(text); m !== null; m = MENTION_RE.exec(text)) {
+    if (m.index > last) parts.push(text.slice(last, m.index));
+    parts.push(
+      <span key={i++} className="bg-sky-400/10 text-sky-300 rounded px-0.5">
+        {m[0]}
+      </span>
+    );
+    last = m.index + m[0].length;
+  }
+  if (parts.length === 0) return text;
+  if (last < text.length) parts.push(text.slice(last));
+  return parts;
+};
+
 interface MessageBubbleProps {
   msg: ChatMessage;
   isOwn: boolean;
@@ -158,16 +205,19 @@ interface MessageBubbleProps {
   deliveryStatus?: Record<string, DeliveryState>;
 }
 
-const MessageBubble = ({ msg, isOwn, onEdit, onDelete, onReply, onPin, onReact, deliveryStatus }: MessageBubbleProps) => {
+const MessageBubble = ({ msg, isOwn, currentUserId, onEdit, onDelete, onReply, onPin, onReact, deliveryStatus }: MessageBubbleProps) => {
   const [showActions, setShowActions] = useState(false);
   const [showReactionPicker, setShowReactionPicker] = useState(false);
 
+  const mentionsMe = Boolean(
+    currentUserId && (msg as MentionableMessage).mentions?.includes(currentUserId)
+  );
+
   return (
     <motion.div
-      layout
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.95 }}
+      // `layout`/exit animations intentionally omitted — see file header note.
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
       className={`flex items-end gap-2 group ${isOwn ? "flex-row-reverse" : "flex-row"}`}
       onMouseEnter={() => setShowActions(true)}
       onMouseLeave={() => { setShowActions(false); setShowReactionPicker(false); }}
@@ -192,7 +242,8 @@ const MessageBubble = ({ msg, isOwn, onEdit, onDelete, onReply, onPin, onReact, 
             ${isOwn
               ? "bg-gradient-to-br from-violet-600 to-purple-700 text-white rounded-2xl rounded-br-sm"
               : "bg-gray-700/80 text-gray-100 rounded-2xl rounded-bl-sm"
-            }`}
+            }
+            ${mentionsMe ? "ring-1 ring-sky-400/40" : ""}`}
         >
           <ReplyQuote replyTo={msg.replyTo} />
 
@@ -201,7 +252,7 @@ const MessageBubble = ({ msg, isOwn, onEdit, onDelete, onReply, onPin, onReact, 
           ) : (msg.type === "image" || msg.type === "audio" || msg.type === "file") ? (
             <FileBubble msg={msg} />
           ) : (
-            <p className="text-sm leading-relaxed break-words whitespace-pre-wrap">{msg.message}</p>
+            <p className="text-sm leading-relaxed break-words whitespace-pre-wrap">{renderTextWithMentions(msg.message)}</p>
           )}
 
           <div className={`flex items-center gap-1.5 mt-1 ${isOwn ? "justify-end" : "justify-start"}`}>
@@ -257,6 +308,21 @@ interface TypingUser {
   name: string;
 }
 
+/** Flattened virtual row: date dividers and the typing indicator are rows of their own. */
+type Row =
+  | { kind: "divider"; key: string; label: string }
+  | { kind: "message"; key: string; msg: ChatMessage }
+  | { kind: "typing"; key: string };
+
+export interface ScrollMeta {
+  atBottom: boolean;
+  nearTop: boolean;
+}
+
+export interface MessageListHandle {
+  scrollToBottom: (smooth?: boolean) => void;
+}
+
 interface MessageListProps {
   messages: ChatMessage[];
   isLoading: boolean;
@@ -269,13 +335,16 @@ interface MessageListProps {
   onReply: (msg: ChatMessage) => void;
   onPin: (messageId: string) => void;
   onReact: (messageId: string, emoji: string) => void;
-  messagesEndRef: React.RefObject<HTMLDivElement>;
   typingUsers: TypingUser[];
   searchQuery?: string;
   deliveryStatus: Record<string, DeliveryState>;
+  /** Styling for the scroll container (MessageList owns the scrollable element now). */
+  className?: string;
+  /** Fired on every scroll: atBottom = within 80px of bottom, nearTop = within 200px of top. */
+  onScrollMeta?: (meta: ScrollMeta) => void;
 }
 
-const MessageList = ({
+const MessageList = forwardRef<MessageListHandle, MessageListProps>(({
   messages,
   isLoading,
   currentUserId,
@@ -287,92 +356,189 @@ const MessageList = ({
   onReply,
   onPin,
   onReact,
-  messagesEndRef,
   typingUsers,
   searchQuery,
   deliveryStatus,
-}: MessageListProps) => {
-  if (isLoading) {
-    return (
-      <div className="flex flex-col gap-3 px-2">
-        {[...Array(5)].map((_, i) => (
-          <div key={i} className={`flex gap-3 ${i % 2 === 0 ? "" : "flex-row-reverse"}`}>
-            <div className="w-8 h-8 bg-gray-700 rounded-full animate-pulse shrink-0" />
-            <div className="h-12 bg-gray-700 rounded-2xl animate-pulse" style={{ width: `${40 + i * 10}%` }} />
-          </div>
-        ))}
-      </div>
-    );
-  }
+  className,
+  onScrollMeta,
+}, ref) => {
+  const parentRef = useRef<HTMLDivElement>(null);
 
-  let lastDate: string | null = null;
+  // Flatten messages into virtual rows (divider rows interleaved by date).
+  const rows = useMemo<Row[]>(() => {
+    if (isLoading) return [];
+    const out: Row[] = [];
+    let lastDate: string | null = null;
+    for (const msg of messages) {
+      const label = formatDateDivider(msg.createdAt);
+      if (label !== lastDate) {
+        // Messages are chronologically ascending, so each date label occurs once —
+        // the label itself is a stable key even when a prepend moves the divider.
+        out.push({ kind: "divider", key: `divider-${label}`, label });
+        lastDate = label;
+      }
+      out.push({ kind: "message", key: msg._id, msg });
+    }
+    if (typingUsers && typingUsers.length > 0) {
+      out.push({ kind: "typing", key: "typing-row" });
+    }
+    return out;
+  }, [messages, typingUsers, isLoading]);
 
-  return (
-    <div className="flex flex-col gap-1">
-      <AnimatePresence initial={false}>
-        {messages.map((msg) => {
-          const msgDate = formatDateDivider(msg.createdAt);
-          const showDivider = msgDate !== lastDate;
-          lastDate = msgDate;
-          const isOwn = msg.userId === currentUserId;
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => parentRef.current,
+    // Rough per-kind estimates; real sizes come from measureElement (ResizeObserver).
+    estimateSize: (index) => {
+      const kind = rows[index]?.kind;
+      if (kind === "divider") return 44;
+      if (kind === "typing") return 48;
+      return 72;
+    },
+    // Stable keys → measured sizes survive prepends (itemSizeCache is keyed by this).
+    getItemKey: (index) => rows[index].key,
+    overscan: 10,
+    /*
+     * Prepend scroll preservation (history pagination).
+     *
+     * `anchorTo: 'end'` turns on the virtualizer's built-in key-based scroll
+     * anchoring: when the row set's edge keys change (ChatroomPage prepending
+     * an older page), the virtualizer captures the virtual item currently at
+     * scrollOffset as [key, scrollOffset - item.start], rebuilds measurements
+     * (our stable getItemKey means every pre-existing row keeps its cached
+     * measured size — only the newly inserted rows use estimateSize), then
+     * eagerly sets scrollOffset = newAnchorStart + offsetIntoItem during the
+     * same render pass and syncs the DOM scrollTop in its layout effect. So
+     * the message the user is looking at stays at exactly the same viewport
+     * position regardless of how many (estimated-height) rows land above it.
+     * Later, when a prepended row scrolls into view and its estimate is
+     * corrected to a real measurement, the size delta happens ABOVE the scroll
+     * offset and the virtualizer compensates scrollTop by the same delta
+     * (its default shouldAdjust predicate) — no jump at any stage.
+     */
+    anchorTo: "end",
+  });
 
-          return (
-            <React.Fragment key={msg._id}>
-              {showDivider && (
-                <div className="flex items-center gap-3 my-3">
-                  <div className="flex-1 h-px bg-gray-700/50" />
-                  <span className="text-xs text-gray-500 bg-gray-800/80 px-3 py-0.5 rounded-full border border-gray-700/50">
-                    {msgDate}
-                  </span>
-                  <div className="flex-1 h-px bg-gray-700/50" />
-                </div>
-              )}
+  const scrollToBottom = useCallback((smooth = false) => {
+    const el = parentRef.current;
+    if (!el) return;
+    if (smooth) {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+      return;
+    }
+    // Instant: retry over a few frames — as bottom rows render and get truly
+    // measured, scrollHeight grows past the initial estimate-based total.
+    let frames = 0;
+    const step = () => {
+      el.scrollTop = el.scrollHeight;
+      if (++frames < 8) requestAnimationFrame(step);
+    };
+    step();
+  }, []);
 
-              {editingId === msg._id ? (
-                <div className={`flex ${isOwn ? "justify-end" : "justify-start"}`}>
-                  <MessageEdit messageId={msg._id} initialText={msg.message} onSave={onSaveEdit} onCancel={onCancelEdit} />
-                </div>
-              ) : (
-                <MessageBubble
-                  msg={msg}
-                  isOwn={isOwn}
-                  currentUserId={currentUserId}
-                  onEdit={onStartEdit}
-                  onDelete={onDeleteRequest}
-                  onReply={onReply}
-                  onPin={onPin}
-                  onReact={onReact}
-                  searchQuery={searchQuery}
-                  deliveryStatus={deliveryStatus}
-                />
-              )}
-            </React.Fragment>
-          );
-        })}
-      </AnimatePresence>
+  useImperativeHandle(ref, () => ({ scrollToBottom }), [scrollToBottom]);
 
-      {/* Typing indicator */}
-      {typingUsers && typingUsers.length > 0 && (
+  const handleScroll = useCallback(() => {
+    const el = parentRef.current;
+    if (!el || !onScrollMeta) return;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    onScrollMeta({
+      atBottom: distFromBottom < 80,
+      nearTop: el.scrollTop < 200,
+    });
+  }, [onScrollMeta]);
+
+  const renderRow = (row: Row) => {
+    if (row.kind === "divider") {
+      // py instead of my: measureElement uses border-box height, which excludes margins.
+      return (
+        <div className="flex items-center gap-3 py-3">
+          <div className="flex-1 h-px bg-gray-700/50" />
+          <span className="text-xs text-gray-500 bg-gray-800/80 px-3 py-0.5 rounded-full border border-gray-700/50">
+            {row.label}
+          </span>
+          <div className="flex-1 h-px bg-gray-700/50" />
+        </div>
+      );
+    }
+
+    if (row.kind === "typing") {
+      return (
         <div className="flex items-end gap-2 py-1">
           <div className="w-7 h-7 rounded-full bg-gray-700 flex items-center justify-center text-xs text-gray-300 font-bold">
-            {typingUsers[0].name?.[0]?.toUpperCase()}
+            {typingUsers[0]?.name?.[0]?.toUpperCase()}
           </div>
           <div className="bg-gray-700/80 rounded-2xl rounded-bl-sm px-4 py-3 flex items-center gap-1">
             <span className="text-xs text-gray-400 mr-2">
               {typingUsers.length === 1
-                ? `${typingUsers[0].name} is typing`
-                : `${typingUsers[0].name} +${typingUsers.length - 1} are typing`}
+                ? `${typingUsers[0]?.name} is typing`
+                : `${typingUsers[0]?.name} +${typingUsers.length - 1} are typing`}
             </span>
             {[0, 1, 2].map((i) => (
               <span key={i} className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
             ))}
           </div>
         </div>
-      )}
+      );
+    }
 
-      <div ref={messagesEndRef} />
+    const msg = row.msg;
+    const isOwn = msg.userId === currentUserId;
+
+    return (
+      <div className="pb-1">
+        {editingId === msg._id ? (
+          <div className={`flex ${isOwn ? "justify-end" : "justify-start"}`}>
+            <MessageEdit messageId={msg._id} initialText={msg.message} onSave={onSaveEdit} onCancel={onCancelEdit} />
+          </div>
+        ) : (
+          <MessageBubble
+            msg={msg}
+            isOwn={isOwn}
+            currentUserId={currentUserId}
+            onEdit={onStartEdit}
+            onDelete={onDeleteRequest}
+            onReply={onReply}
+            onPin={onPin}
+            onReact={onReact}
+            searchQuery={searchQuery}
+            deliveryStatus={deliveryStatus}
+          />
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div ref={parentRef} className={className} onScroll={handleScroll}>
+      {isLoading ? (
+        <div className="flex flex-col gap-3 px-2">
+          {[...Array(5)].map((_, i) => (
+            <div key={i} className={`flex gap-3 ${i % 2 === 0 ? "" : "flex-row-reverse"}`}>
+              <div className="w-8 h-8 bg-gray-700 rounded-full animate-pulse shrink-0" />
+              <div className="h-12 bg-gray-700 rounded-2xl animate-pulse" style={{ width: `${40 + i * 10}%` }} />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+          {virtualizer.getVirtualItems().map((vItem) => (
+            <div
+              key={vItem.key}
+              data-index={vItem.index}
+              ref={virtualizer.measureElement}
+              className="absolute top-0 left-0 w-full"
+              style={{ transform: `translateY(${vItem.start}px)` }}
+            >
+              {renderRow(rows[vItem.index])}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
-};
+});
+
+MessageList.displayName = "MessageList";
 
 export default MessageList;

@@ -11,11 +11,13 @@ import {
   BellIcon,
   UserIcon,
   LockClosedIcon,
+  ChartBarIcon,
 } from "@heroicons/react/24/outline";
 import { useTheme } from "../contexts/ThemeContext";
 import { stringToColor, getInitials } from "../utils/helpers";
 import NotificationsPanel from "./NotificationsPanel";
 import { getApiUrl } from "../services/api";
+import notificationService from "../services/NotificationService";
 import type { AppSocket, AuthUser } from "../types";
 
 interface HeaderNotification {
@@ -24,6 +26,8 @@ interface HeaderNotification {
   message: string;
   room: string;
   conversationId: string;
+  /** Set on @mention notifications — clicking navigates to the room. */
+  chatroomId?: string;
   createdAt: string;
   read: boolean;
 }
@@ -52,9 +56,23 @@ const Header = ({ user, onLogout, socket }: HeaderProps) => {
         ...prev.slice(0, 49),
       ]);
     };
+    // @mention in a chatroom — same panel, with room context + browser notification
+    const handleMentionNotif = ({ chatroomId, chatroomName, from, preview }: { chatroomId: string; chatroomName: string; messageId: string; from: string; preview: string }) => {
+      setNotifications((prev) => [
+        { id: Date.now(), from, message: preview, room: chatroomName, conversationId: "", chatroomId, createdAt: new Date().toISOString(), read: false },
+        ...prev.slice(0, 49),
+      ]);
+      notificationService.playSound("message");
+      void notificationService.showNotification(`${from} mentioned you in ${chatroomName}`, {
+        body: preview.length > 80 ? `${preview.substring(0, 80)}…` : preview,
+        tag: `mention-${Date.now()}`,
+      });
+    };
     socket.on("dmNotification", handleDmNotif);
+    socket.on("mentionNotification", handleMentionNotif);
     return () => {
       socket.off("dmNotification", handleDmNotif);
+      socket.off("mentionNotification", handleMentionNotif);
     };
   }, [socket]);
 
@@ -127,6 +145,11 @@ const Header = ({ user, onLogout, socket }: HeaderProps) => {
                   <EnvelopeIcon className="w-5 h-5" />
                 </Link>
 
+                {/* Metrics dashboard link */}
+                <Link to="/metrics" className="p-2 rounded-xl text-gray-400 hover:text-white hover:bg-gray-800 transition-colors" aria-label="System metrics" title="System Metrics">
+                  <ChartBarIcon className="w-5 h-5" />
+                </Link>
+
                 {/* Notifications bell */}
                 <div className="relative" ref={notifRef}>
                   <button
@@ -144,6 +167,11 @@ const Header = ({ user, onLogout, socket }: HeaderProps) => {
                       notifications={notifications}
                       onMarkAllRead={() => setNotifications((ns) => ns.map((n) => ({ ...n, read: true })))}
                       onClose={() => setShowNotifs(false)}
+                      onItemClick={(n) => {
+                        if (!n.chatroomId) return;
+                        setShowNotifs(false);
+                        navigate(`/chatroom/${n.chatroomId}`);
+                      }}
                     />
                   )}
                 </div>

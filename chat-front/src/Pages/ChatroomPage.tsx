@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef, useCallback, type FormEvent } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   ArrowLeftIcon,
   UsersIcon,
-  ChevronUpIcon,
+  UserGroupIcon,
   MagnifyingGlassIcon,
   LockClosedIcon,
   SparklesIcon,
@@ -17,7 +17,7 @@ import * as heartbeatSvc from "../services/HeartbeatService";
 import { drain as drainOfflineQueue } from "../services/OfflineQueue";
 import { useMessageDelivery } from "../hooks/useMessageDelivery";
 import { getCurrentUserId } from "../hooks/useCurrentUser";
-import MessageList from "../components/MessageList";
+import MessageList, { type MessageListHandle, type ScrollMeta } from "../components/MessageList";
 import MessageInput from "../components/MessageInput";
 import MessageDelete from "../components/MessageDelete";
 import OnlineUsersSidebar from "../components/OnlineUsersSidebar";
@@ -25,6 +25,7 @@ import PinnedMessages from "../components/PinnedMessages";
 import MessageSearchBar from "../components/MessageSearchBar";
 import ScrollToBottomFAB from "../components/ScrollToBottomFAB";
 import AICoPilot from "../components/AICoPilot";
+import RoomMembersPanel from "../components/RoomMembersPanel";
 import type {
   AppSocket,
   AuthUser,
@@ -71,9 +72,39 @@ interface RawChatroomMessage {
   createdAt: string;
 }
 
+/** Cursor block returned by GET /chatroom/:id/messages. */
+interface MessagesCursor {
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
+const mapRawMessage = (m: RawChatroomMessage): ChatMessage => ({
+  _id: m._id,
+  type: m.type || "text",
+  message: m.message || "",
+  fileUrl: m.fileUrl || "",
+  fileName: m.fileName || "",
+  mimeType: m.mimeType || "",
+  fileSize: m.fileSize || 0,
+  lat: m.lat,
+  lng: m.lng,
+  edited: m.edited || false,
+  reactions: m.reactions || [],
+  replyTo: m.replyTo || null,
+  pinned: m.pinned || false,
+  sequenceNumber: m.sequenceNumber || 0,
+  readBy: m.readBy || [],
+  deliveredTo: m.deliveredTo || [],
+  name: m.user?.name || "Unknown",
+  userId: m.user?._id as string,
+  dp: m.user?.dp || "",
+  createdAt: m.createdAt,
+});
+
 const ChatroomPage = ({ socket, user }: ChatroomPageProps) => {
   // Route guarantees the param (/chatroom/:chatroomId)
   const chatroomId = useParams().chatroomId as string;
+  const navigate = useNavigate();
 
   // Core state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -87,9 +118,11 @@ const ChatroomPage = ({ socket, user }: ChatroomPageProps) => {
 
   // UI state
   const [showSidebar, setShowSidebar] = useState(false);
+  const [showMembers, setShowMembers] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ChatMessage | null>(null);
   const [replyTo, setReplyTo] = useState<ReplyToRef | null>(null);
+  const [mentions, setMentions] = useState<string[]>([]);
   const [pinnedMessages, setPinnedMessages] = useState<ChatMessage[]>([]);
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -99,21 +132,20 @@ const ChatroomPage = ({ socket, user }: ChatroomPageProps) => {
   const [expiresIn, setExpiresIn] = useState<number | null>(null);
   const [showAI, setShowAI] = useState(false);
 
-  // Pagination
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
+  // Cursor pagination (infinite scroll up): no params = newest 50, ascending.
   const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   // Delivery tracking: clientMessageId → 'sending' | 'sent' | 'delivered' | 'read'
   const [deliveryStatus, setDeliveryStatus] = useState<Record<string, DeliveryState>>({});
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<MessageListHandle>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isFirstLoad = useRef(true);
   const isAtBottomRef = useRef(true);
   const latestSeqRef = useRef(0); // tracks highest sequenceNumber seen
+  const loadingMoreRef = useRef(false); // sync guard — state updates are async
+  const cursorRef = useRef<{ nextCursor: string | null; hasMore: boolean }>({ nextCursor: null, hasMore: false });
 
   // Delivery hook — ACK + retry + offline queue fallback
   const { send: sendWithGuarantee, pendingCount } = useMessageDelivery(socket, chatroomId);
@@ -152,66 +184,35 @@ const ChatroomPage = ({ socket, user }: ChatroomPageProps) => {
   }, [socket]);
 
   const scrollToBottom = useCallback((smooth = true) => {
-    messagesEndRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto" });
+    listRef.current?.scrollToBottom(smooth);
     setUnreadCount(0);
   }, []);
 
-  const handleScroll = useCallback(() => {
-    const el = scrollContainerRef.current;
-    if (!el) return;
-    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const atBottom = distFromBottom < 80;
-    isAtBottomRef.current = atBottom;
-    setShowFAB(!atBottom);
-    if (atBottom) {
-      setUnreadCount(0);
-      // Emit read receipt for all visible messages when scrolled to bottom
-      if (socket?.connected && latestSeqRef.current > 0) {
-        socket.emit("markRead", { chatroomId, upToSequence: latestSeqRef.current });
-      }
-    }
-  }, [socket, chatroomId]);
+  const applyCursor = (cursor?: MessagesCursor | null) => {
+    const next = cursor?.nextCursor ?? null;
+    const more = Boolean(cursor?.hasMore && next);
+    // Ref (not state): read synchronously inside scroll callbacks so a burst
+    // of scroll events can't race a stale-closure hasMore/nextCursor.
+    cursorRef.current = { nextCursor: next, hasMore: more };
+  };
 
-  const loadMessages = useCallback(async (pageNum = 1, prepend = false) => {
+  /** Initial load: newest MESSAGES_PER_PAGE messages, ascending. */
+  const loadInitial = useCallback(async () => {
     try {
-      if (pageNum === 1) setIsLoadingMessages(true);
-      else setIsLoadingMore(true);
-
+      setIsLoadingMessages(true);
       const response = await api.get(`/chatroom/${chatroomId}/messages`, {
-        params: { page: pageNum, limit: MESSAGES_PER_PAGE },
+        params: { limit: MESSAGES_PER_PAGE },
       });
-      const { messages: msgs, chatroom, pagination } = response.data as {
+      const { messages: msgs, chatroom, cursor } = response.data as {
         messages: RawChatroomMessage[];
         chatroom: { name: string };
-        pagination: { pages: number };
+        cursor: MessagesCursor;
       };
       setChatroomName(chatroom.name);
-      setTotalPages(pagination.pages);
+      applyCursor(cursor);
 
-      const mapped: ChatMessage[] = msgs.map((m) => ({
-        _id: m._id,
-        type: m.type || "text",
-        message: m.message || "",
-        fileUrl: m.fileUrl || "",
-        fileName: m.fileName || "",
-        mimeType: m.mimeType || "",
-        fileSize: m.fileSize || 0,
-        lat: m.lat,
-        lng: m.lng,
-        edited: m.edited || false,
-        reactions: m.reactions || [],
-        replyTo: m.replyTo || null,
-        pinned: m.pinned || false,
-        sequenceNumber: m.sequenceNumber || 0,
-        readBy: m.readBy || [],
-        deliveredTo: m.deliveredTo || [],
-        name: m.user?.name || "Unknown",
-        userId: m.user?._id as string,
-        dp: m.user?.dp || "",
-        createdAt: m.createdAt,
-      }));
-
-      setMessages((prev) => (prepend ? [...mapped, ...prev] : mapped));
+      const mapped = msgs.map(mapRawMessage);
+      setMessages(mapped);
 
       // Track latest sequence for read receipt emission
       if (mapped.length > 0) {
@@ -222,6 +223,42 @@ const ChatroomPage = ({ socket, user }: ChatroomPageProps) => {
       makeToast("error", "Failed to load messages");
     } finally {
       setIsLoadingMessages(false);
+    }
+  }, [chatroomId]);
+
+  /**
+   * Infinite scroll up: fetch the page before the stored cursor and PREPEND it.
+   *
+   * Scroll-position preservation lives inside MessageList (which owns the
+   * virtualizer): on a prepend it shifts scrollTop by the growth in
+   * virtualizer.getTotalSize() (item keys are stable, so only rows inserted
+   * above the old first message account for the difference), and
+   * shouldAdjustScrollPositionOnItemSizeChange compensates for later
+   * estimate→real measurement corrections above the viewport. Net effect:
+   * the message the user was looking at never moves.
+   */
+  const loadOlder = useCallback(async () => {
+    const { nextCursor: cur, hasMore: more } = cursorRef.current;
+    if (!more || !cur || loadingMoreRef.current) return;
+    loadingMoreRef.current = true;
+    setIsLoadingMore(true);
+    try {
+      const response = await api.get(`/chatroom/${chatroomId}/messages`, {
+        params: { before: cur, limit: MESSAGES_PER_PAGE },
+      });
+      const { messages: msgs, cursor } = response.data as {
+        messages: RawChatroomMessage[];
+        cursor: MessagesCursor;
+      };
+      applyCursor(cursor);
+      const mapped = msgs.map(mapRawMessage);
+      if (mapped.length > 0) {
+        setMessages((prev) => [...mapped, ...prev]);
+      }
+    } catch {
+      makeToast("error", "Failed to load older messages");
+    } finally {
+      loadingMoreRef.current = false;
       setIsLoadingMore(false);
     }
   }, [chatroomId]);
@@ -234,10 +271,9 @@ const ChatroomPage = ({ socket, user }: ChatroomPageProps) => {
   }, [chatroomId]);
 
   useEffect(() => {
-    loadMessages(1, false);
+    loadInitial();
     loadPinned();
-    setPage(1);
-  }, [loadMessages, loadPinned]);
+  }, [loadInitial, loadPinned]);
 
   useEffect(() => {
     if (isFirstLoad.current && !isLoadingMessages && messages.length > 0) {
@@ -250,12 +286,23 @@ const ChatroomPage = ({ socket, user }: ChatroomPageProps) => {
     }
   }, [isLoadingMessages, messages.length, scrollToBottom, socket, chatroomId]);
 
-  const handleLoadMore = async () => {
-    if (page >= totalPages || isLoadingMore) return;
-    const nextPage = page + 1;
-    setPage(nextPage);
-    await loadMessages(nextPage, true);
-  };
+  // Scroll meta from MessageList (which owns the scrollable element now):
+  // atBottom drives markRead + FAB exactly as the old onScroll handler did;
+  // nearTop triggers infinite-scroll-up pagination.
+  const handleScrollMeta = useCallback(({ atBottom, nearTop }: ScrollMeta) => {
+    isAtBottomRef.current = atBottom;
+    setShowFAB(!atBottom);
+    if (atBottom) {
+      setUnreadCount(0);
+      // Emit read receipt for all visible messages when scrolled to bottom
+      if (socket?.connected && latestSeqRef.current > 0) {
+        socket.emit("markRead", { chatroomId, upToSequence: latestSeqRef.current });
+      }
+    }
+    if (nearTop && searchResults === null && !isLoadingMessages) {
+      loadOlder();
+    }
+  }, [socket, chatroomId, searchResults, isLoadingMessages, loadOlder]);
 
   const handleSearch = async (q: string) => {
     setSearchQuery(q);
@@ -450,6 +497,7 @@ const ChatroomPage = ({ socket, user }: ChatroomPageProps) => {
     if (!text) return;
 
     const clientMessageId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+    const msgMentions = mentions;
 
     // Optimistic UI — add a pending bubble immediately
     const optimistic: ChatMessage = {
@@ -472,6 +520,7 @@ const ChatroomPage = ({ socket, user }: ChatroomPageProps) => {
     setNewMessage("");
     setReplyTo(null);
     setExpiresIn(null);
+    setMentions([]); // reset composer mentions after send
     if (typingTimeoutRef.current) { clearTimeout(typingTimeoutRef.current); }
     socket?.emit("stopTyping", { chatroomId });
     setTimeout(() => scrollToBottom(), 50);
@@ -482,6 +531,7 @@ const ChatroomPage = ({ socket, user }: ChatroomPageProps) => {
       replyTo: replyTo ? { messageId: replyTo.messageId, preview: replyTo.preview, senderName: replyTo.senderName } : undefined,
       expiresIn: expiresIn || undefined,
       clientMessageId,
+      ...(msgMentions.length > 0 ? { mentions: msgMentions } : {}),
     });
 
     if ("queued" in result && result.queued) {
@@ -495,7 +545,7 @@ const ChatroomPage = ({ socket, user }: ChatroomPageProps) => {
         setDeliveryStatus((prev) => { const n = { ...prev }; delete n[clientMessageId]; return n; });
       }
     }
-  }, [newMessage, socket, chatroomId, replyTo, expiresIn, userId, user, sendWithGuarantee, scrollToBottom]);
+  }, [newMessage, socket, chatroomId, replyTo, expiresIn, mentions, userId, user, sendWithGuarantee, scrollToBottom]);
 
   const sendFile = (fileData: Omit<ChatroomFileMessagePayload, "chatroomId" | "replyTo">) => {
     if (!socket) return;
@@ -618,6 +668,14 @@ const ChatroomPage = ({ socket, user }: ChatroomPageProps) => {
               </button>
             )}
             <button
+              onClick={() => setShowMembers(true)}
+              className="p-2 hover:bg-gray-700 rounded-xl text-gray-400 hover:text-white transition-colors"
+              title="Room members"
+              aria-label="Room members"
+            >
+              <UserGroupIcon className="w-5 h-5" />
+            </button>
+            <button
               onClick={() => setShowAI((v) => !v)}
               className={`p-2 hover:bg-gray-700 rounded-xl transition-colors ${showAI ? "text-violet-400 bg-violet-500/10" : "text-gray-400"}`}
               title="AI Co-Pilot"
@@ -646,38 +704,34 @@ const ChatroomPage = ({ socket, user }: ChatroomPageProps) => {
         {/* Pinned messages banner */}
         <PinnedMessages messages={pinnedMessages} onUnpin={handlePin} />
 
-        {/* Messages area */}
+        {/* Messages area — MessageList owns the scrollable element (virtualized) */}
         <div
-          ref={scrollContainerRef}
-          className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-1 relative"
-          onScroll={handleScroll}
+          className="flex-1 relative min-h-0"
           style={{
             backgroundImage: `radial-gradient(ellipse at 20% 50%, rgba(120,60,200,0.04) 0%, transparent 60%),
               radial-gradient(ellipse at 80% 20%, rgba(60,100,200,0.04) 0%, transparent 60%)`,
           }}
         >
-          {page < totalPages && !isLoadingMessages && (
-            <div className="flex justify-center mb-4">
-              <button
-                onClick={handleLoadMore}
-                disabled={isLoadingMore}
-                className="flex items-center gap-2 px-4 py-2 text-xs text-gray-400 hover:text-white bg-gray-800/60 hover:bg-gray-700 border border-gray-700/50 rounded-full transition-all disabled:opacity-50"
-              >
-                <ChevronUpIcon className="w-3.5 h-3.5" />
-                {isLoadingMore ? "Loading…" : "Load older messages"}
-              </button>
+          {/* Overlay (not in scroll flow, so it never shifts virtual rows) */}
+          {isLoadingMore && (
+            <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10">
+              <span className="text-xs text-gray-400 bg-gray-800/80 border border-gray-700/50 px-3 py-1 rounded-full">
+                Loading older messages…
+              </span>
             </div>
           )}
 
           {searchResults !== null && (
-            <div className="text-center mb-3">
-              <span className="text-xs text-gray-500 bg-gray-800/60 px-3 py-1 rounded-full">
+            <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10">
+              <span className="text-xs text-gray-500 bg-gray-800/80 px-3 py-1 rounded-full border border-gray-700/50">
                 {searchResults.length} result{searchResults.length !== 1 ? "s" : ""} for "{searchQuery}"
               </span>
             </div>
           )}
 
           <MessageList
+            ref={listRef}
+            className="h-full overflow-y-auto px-4 sm:px-6 py-4"
             messages={displayedMessages}
             isLoading={isLoadingMessages}
             currentUserId={userId}
@@ -689,10 +743,10 @@ const ChatroomPage = ({ socket, user }: ChatroomPageProps) => {
             onReply={(msg: ChatMessage) => setReplyTo({ messageId: msg._id, preview: msg.message?.slice(0, 80) || "File", senderName: msg.name })}
             onPin={handlePin}
             onReact={handleReact}
-            messagesEndRef={messagesEndRef}
             typingUsers={typingUsers}
             searchQuery={searchQuery}
             deliveryStatus={deliveryStatus}
+            onScrollMeta={handleScrollMeta}
           />
 
           <ScrollToBottomFAB visible={showFAB} unread={unreadCount} onClick={() => scrollToBottom()} />
@@ -714,6 +768,8 @@ const ChatroomPage = ({ socket, user }: ChatroomPageProps) => {
           expiresIn={expiresIn}
           onExpiresInChange={setExpiresIn}
           onOpenAI={() => setShowAI((v) => !v)}
+          chatroomId={chatroomId}
+          onMentionsChange={setMentions}
         />
       </div>
 
@@ -722,6 +778,13 @@ const ChatroomPage = ({ socket, user }: ChatroomPageProps) => {
         isOpen={showAI}
         onClose={() => setShowAI(false)}
         onSelectSuggestion={(text: string) => setNewMessage(text)}
+      />
+
+      <RoomMembersPanel
+        chatroomId={chatroomId}
+        isOpen={showMembers}
+        onClose={() => setShowMembers(false)}
+        onLeft={() => navigate("/dashboard")}
       />
 
       {deleteTarget && (

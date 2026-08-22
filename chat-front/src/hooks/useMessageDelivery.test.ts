@@ -89,6 +89,98 @@ describe("useMessageDelivery", () => {
     expect(enqueueMock).not.toHaveBeenCalled();
   });
 
+  it("resolves forbidden immediately — no retry, no offline enqueue", async () => {
+    vi.useFakeTimers();
+    const { socket, emit } = makeSocket(true);
+    emit.mockImplementation((_event, _payload, cb) => {
+      cb(null, { ok: false, error: "forbidden" });
+    });
+    const { result } = renderHook(() => useMessageDelivery(socket, "room-1"));
+
+    let res!: SendResult;
+    await act(async () => {
+      res = await result.current.send({ message: "not a member" });
+    });
+
+    // Advance well past every backoff window — a retry would emit again.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+
+    expect(res).toEqual({ ok: false, error: "forbidden" });
+    expect(emit).toHaveBeenCalledTimes(1);
+    expect(result.current.pendingCount).toBe(0);
+    expect(enqueueMock).not.toHaveBeenCalled();
+  });
+
+  it("resolves invalid_message immediately — no retry, no offline enqueue", async () => {
+    vi.useFakeTimers();
+    const { socket, emit } = makeSocket(true);
+    emit.mockImplementation((_event, _payload, cb) => {
+      cb(null, { ok: false, error: "invalid_message" });
+    });
+    const { result } = renderHook(() => useMessageDelivery(socket, "room-1"));
+
+    let res!: SendResult;
+    await act(async () => {
+      res = await result.current.send({ message: "" });
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+
+    expect(res).toEqual({ ok: false, error: "invalid_message" });
+    expect(emit).toHaveBeenCalledTimes(1);
+    expect(result.current.pendingCount).toBe(0);
+    expect(enqueueMock).not.toHaveBeenCalled();
+  });
+
+  it("still retries server_error acks, then falls back to the offline queue", async () => {
+    vi.useFakeTimers();
+    const { socket, emit } = makeSocket(true);
+    emit.mockImplementation((_event, _payload, cb) => {
+      cb(null, { ok: false, error: "server_error" });
+    });
+    const { result } = renderHook(() => useMessageDelivery(socket, "room-1"));
+
+    let sendPromise!: Promise<SendResult>;
+    act(() => {
+      sendPromise = result.current.send({ message: "flaky server" });
+    });
+
+    expect(emit).toHaveBeenCalledTimes(1);
+
+    // Backoff delays are 1s/2s/4s/8s with up to +20% jitter — advance generously.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(32_000);
+    });
+    expect(emit).toHaveBeenCalledTimes(5); // initial + 4 retries
+
+    const res = await sendPromise;
+    expect(res).toMatchObject({ queued: true });
+    expect(enqueueMock).toHaveBeenCalledTimes(1);
+    expect(result.current.pendingCount).toBe(0);
+  });
+
+  it("forwards mentions in the emitted payload", async () => {
+    const { socket, emit } = makeSocket(true);
+    emit.mockImplementation((_event, _payload, cb) => {
+      cb(null, { ok: true, messageId: "srv-3" });
+    });
+    const { result } = renderHook(() => useMessageDelivery(socket, "room-1"));
+
+    await act(async () => {
+      await result.current.send({ message: "hey @Alice", mentions: ["user-a", "user-b"] });
+    });
+
+    expect(emit).toHaveBeenCalledWith(
+      "chatroomMessage",
+      expect.objectContaining({ message: "hey @Alice", mentions: ["user-a", "user-b"] }),
+      expect.any(Function)
+    );
+  });
+
   it("retries with exponential backoff on timeout, then falls back to the offline queue", async () => {
     vi.useFakeTimers();
     const { socket, emit } = makeSocket(true);

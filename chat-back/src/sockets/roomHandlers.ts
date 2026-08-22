@@ -1,15 +1,23 @@
 import mongoose from "mongoose";
 import { Message } from "../models/Message.js";
+import { RoomReadState } from "../models/RoomReadState.js";
 import { User } from "../models/User.js";
+import { canAccessRoom, ensureMembership, getAccessibleRoom } from "../services/roomAccess.js";
 import { dedup, metrics, presenceRegistry, rateLimiter, seqCounter, typingMgr } from "../shared/index.js";
 import { messageLatency, messagesTotal } from "../shared/prometheus.js";
 import { errMessage, logger } from "../utils/logger.js";
 import type { AppServer, AppSocket, ChatroomMessagePayload, NewMessagePayload } from "./events.js";
 
+const MAX_MENTIONS = 10;
+
 export function registerRoomHandlers(io: AppServer, socket: AppSocket): void {
   const userId = socket.data.userId;
 
   socket.on("joinRoom", async ({ chatroomId }) => {
+    // Private rooms admit members only (this was previously unchecked);
+    // joining a public room records participation.
+    if (!(await canAccessRoom(chatroomId, userId))) return;
+    await ensureMembership(chatroomId, userId).catch(() => {});
     socket.join(chatroomId);
     const u = await presenceRegistry.get(userId);
     if (u) socket.to(chatroomId).emit("userJoined", { userId, name: u.name });
@@ -52,8 +60,28 @@ export function registerRoomHandlers(io: AppServer, socket: AppSocket): void {
         return;
       }
 
+      // Room-level authorization — private rooms accept members only
+      const room = await getAccessibleRoom(chatroomId, userId);
+      if (!room) {
+        if (typeof ackFn === "function") ackFn({ ok: false, error: "forbidden" });
+        return;
+      }
+
+      // Sending is participation — record membership for public-room senders
+      // who never emitted joinRoom (keeps the members list honest)
+      if (!room.members.some((m) => m.user.toString() === userId)) {
+        await ensureMembership(chatroomId, userId).catch(() => {});
+      }
+
       const user = await User.findById(userId).select("name email dp");
       if (!user) return;
+
+      // Sanitize mentions: valid ids, deduped, capped, never yourself. In a
+      // private room only members can be mentioned (non-members can't read).
+      const mentions = [...new Set(data.mentions ?? [])]
+        .filter((id) => mongoose.Types.ObjectId.isValid(id) && id !== userId)
+        .filter((id) => !room.isPrivate || room.members.some((m) => m.user.toString() === id))
+        .slice(0, MAX_MENTIONS);
 
       const seq = await seqCounter.next(chatroomId);
 
@@ -65,6 +93,7 @@ export function registerRoomHandlers(io: AppServer, socket: AppSocket): void {
         sequenceNumber: seq,
         clientMessageId: clientMessageId || null,
         deliveredTo: [userId],
+        mentions,
       };
 
       if (replyTo?.messageId) {
@@ -91,6 +120,7 @@ export function registerRoomHandlers(io: AppServer, socket: AppSocket): void {
 
       const payload: NewMessagePayload = {
         _id: newMessage._id.toString(),
+        mentions,
         type: "text",
         message: message.trim(),
         name: user.name,
@@ -113,6 +143,24 @@ export function registerRoomHandlers(io: AppServer, socket: AppSocket): void {
 
       io.to(chatroomId).emit("newMessage", payload);
       metrics.recordDelivered();
+
+      // Sending implies having read everything up to your own message
+      await RoomReadState.updateOne(
+        { user: userId, chatroom: chatroomId },
+        { $max: { lastReadSequence: seq } },
+        { upsert: true }
+      ).catch(() => {});
+
+      // Targeted mention notifications via per-user rooms (cross-replica safe)
+      for (const mentionedId of mentions) {
+        io.to(`user:${mentionedId}`).emit("mentionNotification", {
+          chatroomId,
+          chatroomName: room.name,
+          messageId: newMessage._id.toString(),
+          from: user.name,
+          preview: message.trim().slice(0, 80),
+        });
+      }
     } catch (err) {
       metrics.recordFailed();
       messagesTotal.inc({ outcome: "failed" });
@@ -132,6 +180,7 @@ export function registerRoomHandlers(io: AppServer, socket: AppSocket): void {
         return;
       }
       if (clientMessageId && (await dedup.check(clientMessageId))) return;
+      if (!(await canAccessRoom(chatroomId, userId))) return;
 
       const user = await User.findById(userId).select("name email dp");
       if (!user) return;

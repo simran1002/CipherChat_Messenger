@@ -351,9 +351,11 @@ const DirectMessagesPage = ({ socket }: DirectMessagesPageProps) => {
     inputRef.current?.focus();
 
     const conversationId = activeConv._id;
-    const peerId = activeConv.participant?._id;
+    const peerId = activeConv.participant?._id ?? "";
     const clientMessageId = crypto.randomUUID();
-    const useEncryption = e2eeStatus.state === "ready" && !!peerId;
+    // Plaintext only when E2EE is unavailable; a missing participant while
+    // "ready" fails encryption loudly instead of silently downgrading.
+    const useEncryption = e2eeStatus.state === "ready";
 
     const optimistic: DmMessage = {
       _id: `pending-${clientMessageId}`,

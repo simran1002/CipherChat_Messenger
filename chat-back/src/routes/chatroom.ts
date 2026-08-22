@@ -20,4 +20,11 @@ router.post("/:chatroomId/read", auth, catchErrors(chatroomController.markRead))
 // Delivery receipt — confirm a specific message was received on-device
 router.post("/messages/:messageId/delivered", auth, catchErrors(chatroomController.markDelivered));
 
+// Membership & roles
+router.get("/:chatroomId/members", auth, catchErrors(chatroomController.getMembers));
+router.post("/:chatroomId/join", auth, catchErrors(chatroomController.joinRoom));
+router.post("/:chatroomId/invite", auth, catchErrors(chatroomController.inviteMember));
+router.post("/:chatroomId/leave", auth, catchErrors(chatroomController.leaveRoom));
+router.patch("/:chatroomId/members/:userId", auth, catchErrors(chatroomController.updateMemberRole));
+
 export default router;

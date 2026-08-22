@@ -15,6 +15,7 @@ const DashboardPage = lazy(() => import("./Pages/DashboardPage"));
 const ChatroomPage = lazy(() => import("./Pages/ChatroomPage"));
 const DirectMessagesPage = lazy(() => import("./Pages/DirectMessagesPage"));
 const ProfilePage = lazy(() => import("./Pages/ProfilePage"));
+const MetricsDashboardPage = lazy(() => import("./Pages/MetricsDashboardPage"));
 
 // Hoisted out of App() — an inline definition re-created the component type on
 // every render and remounted the whole protected subtree.
@@ -170,6 +171,14 @@ function App() {
                     element={
                       <ProtectedRoute>
                         <ProfilePage user={user} setUser={setUser} />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/metrics"
+                    element={
+                      <ProtectedRoute>
+                        <MetricsDashboardPage />
                       </ProtectedRoute>
                     }
                   />

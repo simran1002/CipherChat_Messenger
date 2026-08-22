@@ -4,6 +4,8 @@
  * before it can corrupt a single message.
  */
 import { describe, expect, it } from "vitest";
+import { hkdf } from "@noble/hashes/hkdf.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import {
   aesGcmDecrypt,
   aesGcmEncrypt,
@@ -74,20 +76,22 @@ describe("Ed25519 — RFC 8032 §7.1 TEST 1", () => {
 });
 
 describe("HKDF-SHA256 — RFC 5869 A.1", () => {
-  it("matches the RFC OKM", () => {
-    const ikm = hex("0b".repeat(22));
-    const salt = hex("000102030405060708090a0b0c");
-    const okm = hkdfSha256(ikm, salt, "", 42);
-    // info is 0xf0..f9 in the RFC; our API takes a string, so recompute via bytes:
-    // instead pin the no-info variant through hmac equivalence below and the
-    // full RFC vector with byte-info here:
-    void okm;
-    const { hkdf } = require("@noble/hashes/hkdf.js") as typeof import("@noble/hashes/hkdf.js");
-    const { sha256 } = require("@noble/hashes/sha2.js") as typeof import("@noble/hashes/sha2.js");
+  const ikm = hex("0b".repeat(22));
+  const salt = hex("000102030405060708090a0b0c");
+
+  it("matches the RFC OKM (byte info, against the library directly)", () => {
+    // The RFC's info is raw bytes 0xf0..f9 (not valid UTF-8 text), so this
+    // vector pins the underlying library our wrapper delegates to.
     const full = hkdf(sha256, ikm, salt, hex("f0f1f2f3f4f5f6f7f8f9"), 42);
     expect(toHex(full)).toBe(
       "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865"
     );
+  });
+
+  it("hkdfSha256 wrapper is exactly hkdf(sha256, …) with UTF-8 info", () => {
+    const viaWrapper = hkdfSha256(ikm, salt, "cipher-msgr/test", 32);
+    const direct = hkdf(sha256, ikm, salt, utf8Encode("cipher-msgr/test"), 32);
+    expect(toHex(viaWrapper)).toBe(toHex(direct));
   });
 });
 

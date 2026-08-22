@@ -9,12 +9,16 @@ describe("detectSensitiveData", () => {
     expect(match?.suggestion).toContain("credit card");
   });
 
-  it("detects a 6-digit OTP", () => {
-    // Note: the OTP pattern requires the digits to appear BEFORE the keyword.
-    const match = detectSensitiveData("123456 is your OTP, do not share it");
-    expect(match).not.toBeNull();
-    expect(match?.type).toBe("OTP / Verification code");
-    expect(match?.suggestion).toContain("OTP");
+  it("detects a 6-digit OTP in either phrasing order", () => {
+    const digitsFirst = detectSensitiveData("123456 is your OTP, do not share it");
+    expect(digitsFirst?.type).toBe("OTP / Verification code");
+
+    // The common phrasing puts the keyword first — a past pattern missed this
+    const keywordFirst = detectSensitiveData("Your OTP is 123456");
+    expect(keywordFirst?.type).toBe("OTP / Verification code");
+
+    const verification = detectSensitiveData("verification code: 9482");
+    expect(verification?.type).toBe("OTP / Verification code");
   });
 
   it("detects a password disclosure", () => {
@@ -24,11 +28,15 @@ describe("detectSensitiveData", () => {
     expect(match?.suggestion).toContain("password manager");
   });
 
-  it("detects an sk- style API key with a key prefix", () => {
-    const match = detectSensitiveData("api_key=sk-abc123def456ghi789jkl");
-    expect(match).not.toBeNull();
-    expect(match?.type).toBe("API key");
-    expect(match?.suggestion).toContain("revoke");
+  it("detects labeled and bare API keys", () => {
+    const labeled = detectSensitiveData("api_key=sk-abc123def456ghi789jkl");
+    expect(labeled?.type).toBe("API key");
+    expect(labeled?.suggestion).toContain("revoke");
+
+    // Bare pastes of well-known key shapes (no label) must also trip it
+    expect(detectSensitiveData("here you go sk-abc123def456ghi789jklmno")?.type).toBe("API key");
+    expect(detectSensitiveData("use ghp_abcdefghijklmnopqrstuv123456")?.type).toBe("API key");
+    expect(detectSensitiveData("creds AKIAIOSFODNN7EXAMPLE done")?.type).toBe("API key");
   });
 
   it("detects an email address", () => {

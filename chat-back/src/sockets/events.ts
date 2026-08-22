@@ -22,6 +22,8 @@ export interface ChatroomMessagePayload {
   replyTo?: ReplyToRef;
   expiresIn?: number;
   clientMessageId?: string;
+  /** User ids selected via the composer's @mention autocomplete (max 10). */
+  mentions?: string[];
 }
 
 export interface ChatroomFileMessagePayload {
@@ -43,12 +45,13 @@ export interface MessageAck {
   messageId?: string;
   sequenceNumber?: number;
   duplicate?: boolean;
-  error?: "rate_limited" | "invalid_message" | "server_error";
+  error?: "rate_limited" | "invalid_message" | "forbidden" | "server_error";
   message?: string;
 }
 
 export interface NewMessagePayload {
   _id: string;
+  mentions?: string[];
   type: string;
   message: string;
   name: string;
@@ -169,6 +172,13 @@ export interface ServerToClientEvents {
     createdAt: Date;
   }) => void;
   dmNotification: (p: { conversationId: string; from: string; message: string }) => void;
+  mentionNotification: (p: {
+    chatroomId: string;
+    chatroomName: string;
+    messageId: string;
+    from: string;
+    preview: string;
+  }) => void;
   dmUserTyping: (p: { userId: string; name?: string }) => void;
   dmUserStopTyping: (p: { userId: string }) => void;
   syncOfflineQueueResult: (p: { results: SyncResultItem[] }) => void;

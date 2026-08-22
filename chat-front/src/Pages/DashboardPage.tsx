@@ -1,4 +1,4 @@
-import { useState, useEffect, type FormEvent } from "react";
+import { useState, useEffect, useCallback, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -8,40 +8,66 @@ import {
   MagnifyingGlassIcon,
   ArrowRightIcon,
   UserCircleIcon,
+  UsersIcon,
+  LockClosedIcon,
 } from "@heroicons/react/24/outline";
 import { makeToast } from "../utils/toast";
 import api from "../services/api";
 import type { AppSocket, Chatroom } from "../types";
 
+/** GET /chatroom rows now carry membership + unread info (Phase 4). */
+type DashboardRoom = Chatroom & {
+  memberCount?: number;
+  myRole?: "owner" | "admin" | "member" | null;
+  unreadCount?: number;
+  isPrivate?: boolean;
+};
+
 interface DashboardPageProps {
   socket: AppSocket | null;
 }
 
-// The socket prop is passed by App but not used on this page (kept for API parity).
-// socket prop kept for call-site parity; the dashboard itself never uses it
-const DashboardPage = ({}: DashboardPageProps) => {
-  const [chatrooms, setChatrooms] = useState<Chatroom[]>([]);
+const DashboardPage = ({ socket }: DashboardPageProps) => {
+  const [chatrooms, setChatrooms] = useState<DashboardRoom[]>([]);
   const [newChatroomName, setNewChatroomName] = useState("");
+  const [newRoomPrivate, setNewRoomPrivate] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [showCreateForm, setShowCreateForm] = useState(false);
 
-  const getChatrooms = async () => {
+  const getChatrooms = useCallback(async () => {
     try {
       const response = await api.get("/chatroom");
-      setChatrooms(response.data as Chatroom[]);
+      setChatrooms(response.data as DashboardRoom[]);
     } catch (err) {
       console.error("Error fetching chatrooms:", err);
       makeToast("error", "Failed to load chatrooms");
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    getChatrooms();
-  }, []);
+    void getChatrooms();
+  }, [getChatrooms]);
+
+  // Keep unread counts fresh: refetch when the window regains focus and when
+  // the user is mentioned somewhere.
+  useEffect(() => {
+    const onFocus = () => void getChatrooms();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [getChatrooms]);
+
+  useEffect(() => {
+    if (!socket) return;
+    const onMention = () => void getChatrooms();
+    socket.on("mentionNotification", onMention);
+    return () => {
+      socket.off("mentionNotification", onMention);
+    };
+  }, [socket, getChatrooms]);
 
   const createChatroom = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -54,11 +80,13 @@ const DashboardPage = ({}: DashboardPageProps) => {
     try {
       const response = await api.post("/chatroom", {
         name: newChatroomName.trim(),
+        isPrivate: newRoomPrivate,
       });
       makeToast("success", (response.data as { message: string }).message);
       setNewChatroomName("");
+      setNewRoomPrivate(false);
       setShowCreateForm(false);
-      getChatrooms();
+      void getChatrooms();
     } catch (err) {
       const message = (err as { response?: { data?: { message?: string } } })?.response?.data
         ?.message;
@@ -68,9 +96,17 @@ const DashboardPage = ({}: DashboardPageProps) => {
     }
   };
 
-  const filteredChatrooms = chatrooms.filter((chatroom) =>
-    chatroom.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Unread rooms first, then newest-created first
+  const filteredChatrooms = chatrooms
+    .filter((chatroom) => chatroom.name.toLowerCase().includes(searchTerm.toLowerCase()))
+    .sort((a, b) => {
+      const aUnread = (a.unreadCount ?? 0) > 0 ? 1 : 0;
+      const bUnread = (b.unreadCount ?? 0) > 0 ? 1 : 0;
+      if (aUnread !== bUnread) return bUnread - aUnread;
+      const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return bTime - aTime;
+    });
 
   const formatDate = (dateString?: string) => {
     if (!dateString) return "";
@@ -183,6 +219,25 @@ const DashboardPage = ({}: DashboardPageProps) => {
                       Letters, numbers, spaces, hyphens, and underscores only
                     </p>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => setNewRoomPrivate((v) => !v)}
+                    className="w-full flex items-center justify-between bg-gray-700/50 border border-gray-600 rounded-xl px-4 py-3 hover:border-gray-500 transition-all"
+                    aria-pressed={newRoomPrivate}
+                  >
+                    <span className="flex items-center gap-2 text-sm text-gray-300">
+                      <LockClosedIcon className={`w-4 h-4 ${newRoomPrivate ? "text-violet-400" : "text-gray-500"}`} />
+                      Private room
+                      <span className="text-xs text-gray-500 hidden sm:inline">— invite only</span>
+                    </span>
+                    <span
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${newRoomPrivate ? "bg-violet-600" : "bg-gray-600"}`}
+                    >
+                      <span
+                        className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${newRoomPrivate ? "translate-x-[18px]" : "translate-x-1"}`}
+                      />
+                    </span>
+                  </button>
                   <div className="flex space-x-3 pt-2">
                     <button
                       type="button"
@@ -250,12 +305,45 @@ const DashboardPage = ({}: DashboardPageProps) => {
                           {chatroom.name.charAt(0).toUpperCase()}
                         </span>
                       </div>
-                      <ArrowRightIcon className="w-5 h-5 text-gray-600 group-hover:text-primary-400 transition-colors" />
+                      <div className="flex items-center gap-2">
+                        {(chatroom.unreadCount ?? 0) > 0 && (
+                          <span className="min-w-[20px] h-5 px-1.5 flex items-center justify-center bg-red-500 text-white text-xs font-bold rounded-full shadow-lg shadow-red-500/30">
+                            {(chatroom.unreadCount ?? 0) > 99 ? "99+" : chatroom.unreadCount}
+                          </span>
+                        )}
+                        <ArrowRightIcon className="w-5 h-5 text-gray-600 group-hover:text-primary-400 transition-colors" />
+                      </div>
                     </div>
-                    <h3 className="text-lg font-semibold text-white mb-2 group-hover:text-primary-400 transition-colors">
-                      {chatroom.name}
-                    </h3>
+                    <div className="flex items-center gap-2 mb-2">
+                      <h3 className="text-lg font-semibold text-white group-hover:text-primary-400 transition-colors truncate">
+                        {chatroom.name}
+                      </h3>
+                      {chatroom.isPrivate && (
+                        <span title="Private room" className="shrink-0">
+                          <LockClosedIcon className="w-4 h-4 text-violet-400" />
+                        </span>
+                      )}
+                      {chatroom.myRole && (
+                        <span
+                          className={`text-[10px] font-semibold uppercase tracking-wide border rounded-full px-2 py-0.5 shrink-0 ${
+                            chatroom.myRole === "owner"
+                              ? "bg-amber-500/15 text-amber-400 border-amber-500/30"
+                              : chatroom.myRole === "admin"
+                                ? "bg-sky-500/15 text-sky-400 border-sky-500/30"
+                                : "bg-gray-600/20 text-gray-400 border-gray-600/40"
+                          }`}
+                        >
+                          {chatroom.myRole}
+                        </span>
+                      )}
+                    </div>
                     <div className="flex items-center gap-4 text-sm text-gray-500">
+                      {typeof chatroom.memberCount === "number" && (
+                        <div className="flex items-center space-x-1">
+                          <UsersIcon className="w-4 h-4" />
+                          <span>{chatroom.memberCount}</span>
+                        </div>
+                      )}
                       {chatroom.createdBy && (
                         <div className="flex items-center space-x-1">
                           <UserCircleIcon className="w-4 h-4" />
