@@ -24,3 +24,6 @@ yarn-error.log*
 
 # vite build output
 /dist
+
+# local dev env (VITE_API_URL); copy from .env.example
+.env

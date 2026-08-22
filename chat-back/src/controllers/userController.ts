@@ -12,6 +12,7 @@ import {
   rotateRefreshToken,
 } from "./authTokens.js";
 import mongoose from "mongoose";
+import { fileStorage } from "../storage/index.js";
 import { logger } from "../utils/logger.js";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -121,7 +122,13 @@ export async function updateProfile(req: Request, res: Response): Promise<void> 
   if (!user) throw HttpError.notFound("User not found.");
   if (name && name.trim()) user.name = name.trim().slice(0, 50);
   if (bio !== undefined) user.bio = bio.slice(0, 160);
-  if (req.file) user.dp = `/uploads/${req.file.filename}`;
+  if (req.file) {
+    const previousKey = user.dp ? fileStorage.keyFromUrl(user.dp) : null;
+    const stored = await fileStorage.put(req.file);
+    user.dp = stored.url;
+    // The old avatar used to leak on disk forever — reclaim it (best-effort)
+    if (previousKey) void fileStorage.delete(previousKey);
+  }
   await user.save();
   logger.info("Profile updated", { userId: user.id });
   res.json({

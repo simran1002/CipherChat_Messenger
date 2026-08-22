@@ -267,12 +267,16 @@ export function registerRoomHandlers(io: AppServer, socket: AppSocket): void {
 
   // ── Typing — TTL-managed, no ghost indicators ─────────────────────────────
   socket.on("typing", async ({ chatroomId }) => {
-    const u = await presenceRegistry.get(userId);
-    if (!u) return;
-    typingMgr.start(chatroomId, userId, u.name, (expiredId) => {
+    // The presence entry is written asynchronously on connect; a typing event
+    // that races it (fast clients, busy pods) must not be silently dropped.
+    const name =
+      (await presenceRegistry.get(userId))?.name ??
+      (await User.findById(userId).select("name").lean())?.name;
+    if (!name) return;
+    typingMgr.start(chatroomId, userId, name, (expiredId) => {
       socket.to(chatroomId).emit("userStopTyping", { userId: expiredId, chatroomId });
     });
-    socket.to(chatroomId).emit("userTyping", { userId, name: u.name, chatroomId });
+    socket.to(chatroomId).emit("userTyping", { userId, name, chatroomId });
   });
 
   socket.on("stopTyping", ({ chatroomId }) => {

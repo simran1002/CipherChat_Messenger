@@ -25,6 +25,11 @@ export const allowedOrigins = [
   "http://localhost:3000",
   "http://localhost:3001",
   "http://localhost:5173",
+  // 127.0.0.1 is a *different origin* from localhost → separate localStorage
+  // and IndexedDB. Opening the app on both gives two fully isolated users in
+  // one browser profile — handy for E2EE / failover demos without incognito.
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:5173",
   env.FRONTEND_URL,
 ].filter((o): o is string => Boolean(o));
 
@@ -61,6 +66,18 @@ const authLimiter = rateLimit({
   message: { message: "Too many requests, please try again later." },
 });
 app.use("/user", authLimiter);
+
+// Refresh gets its own, tighter bucket on top of the /user one: a stolen or
+// guessed refresh cookie shouldn't get 100 tries per window.
+const refreshLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: limiterStore("refresh"),
+  message: { message: "Too many refresh attempts, please sign in again." },
+});
+app.use("/user/refresh", refreshLimiter);
 
 const uploadLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -109,7 +126,8 @@ app.get("/health", (_req, res) => {
   });
 });
 
-// Serve uploaded files statically
+// Serve uploaded files statically (local storage driver only — with the S3
+// driver, URLs point at the bucket/CDN and this route simply 404s)
 app.use("/uploads", express.static(path.join(__dirname, "..", "uploads")));
 
 app.use("/user", userRoutes);

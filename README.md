@@ -1,6 +1,6 @@
 # CipherChat Messenger
 
-![CI](https://github.com/varunmehra5/Cipher_Messenger/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/simran1002/CipherChat_Messenger/actions/workflows/ci.yml/badge.svg)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6)
 ![Tests](https://img.shields.io/badge/tests-170%2B-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -100,6 +100,7 @@ and both Docker images.
 chat-back/    Express + Socket.IO + Mongoose (TypeScript, strict)
   src/sockets/       typed event maps + per-domain handlers
   src/shared/        reliability layer: interfaces + in-memory + Redis impls
+  src/storage/       file storage: interface + local-disk + S3-compatible drivers
   src/services/      room authorization authority
   tests/             unit + integration (mongodb-memory-server, socket.io-client)
 chat-front/   React 18 + Vite + Tailwind (TypeScript, strict)

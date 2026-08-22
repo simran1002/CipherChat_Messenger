@@ -12,6 +12,18 @@ const envSchema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   FRONTEND_URL: z.string().optional(),
   REDIS_URL: z.string().optional(),
+  // File storage: "local" (uploads/ on disk) or "s3" (S3-compatible bucket).
+  STORAGE_DRIVER: z.enum(["local", "s3"]).default("local"),
+  S3_BUCKET: z.string().optional(),
+  S3_REGION: z.string().default("us-east-1"),
+  /** Custom endpoint for MinIO / R2 / LocalStack (omit for AWS). */
+  S3_ENDPOINT: z.string().optional(),
+  /** Public URL prefix objects are served from (bucket website or CDN). */
+  S3_PUBLIC_BASE_URL: z.string().optional(),
+  S3_FORCE_PATH_STYLE: z
+    .string()
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === "true" || v === "1")),
 });
 
 const parsed = envSchema.safeParse(process.env);

@@ -142,6 +142,14 @@ router.post(
 );
 
 // POST /ai/tone — analyze tone of a draft message
+//
+// Prompt-injection note (applies to all three routes): user text is
+// interpolated into the prompt, so a message like "ignore the above and …"
+// can steer the model. The blast radius is bounded by design — the model
+// only ever returns text the *same* user sees (summary/suggestion/tone), has
+// no tools, and the output is parsed defensively (regex-extract + JSON.parse
+// in try/catch, defaults on failure). Rooms are server-readable by design
+// (ADR-0004); DMs never reach these routes.
 router.post(
   "/tone",
   auth,

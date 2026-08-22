@@ -1,19 +1,12 @@
 import multer from "multer";
-import path from "node:path";
-import fs from "node:fs";
 import { HttpError } from "../errors/HttpError.js";
 
-export const uploadDir = path.join(__dirname, "..", "..", "uploads");
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadDir),
-  filename: (_req, file, cb) => {
-    const unique = Date.now() + "-" + Math.round(Math.random() * 1e6);
-    cb(null, unique + path.extname(file.originalname));
-  },
-});
-
+/**
+ * Multer receives the multipart body into memory; the storage driver
+ * (src/storage) decides where bytes actually live. Memory is fine at the
+ * 10 MB cap — the alternative (disk temp files) would couple this layer to
+ * the local driver again.
+ */
 const ALLOWED_MIME = [
   "image/jpeg",
   "image/png",
@@ -35,7 +28,7 @@ const fileFilter: multer.Options["fileFilter"] = (_req, file, cb) => {
 };
 
 export const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   fileFilter,
   limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
 });

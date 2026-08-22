@@ -54,13 +54,32 @@ describe("typing indicators and receipts (socket integration)", () => {
 
     const aliceUser = await createUserWithToken("Alice Typing");
     const bobUser = await createUserWithToken("Bob Typing");
+    // Presence is registered asynchronously after connect and announced via
+    // the `onlineUsers` roster broadcast — wait for a roster that contains
+    // both users instead of sleeping a fixed interval (which flaked under
+    // full-suite CPU load).
+    const bothOnline = (roster: Array<{ userId: string }>, a: string, b: string) =>
+      roster.some((u) => u.userId === a) && roster.some((u) => u.userId === b);
+    const rosterReady = (sock: ClientSocket, a: string, b: string) =>
+      new Promise<void>((resolve) => {
+        const deadline = setTimeout(resolve, 10_000); // never hang the test on this
+        sock.on("onlineUsers", (roster: Array<{ userId: string }>) => {
+          if (bothOnline(roster, a, b)) {
+            clearTimeout(deadline);
+            resolve();
+          }
+        });
+      });
+
     const aliceSocket = await connectClient(server.baseUrl, aliceUser.token);
+    const ready = rosterReady(aliceSocket, aliceUser.userId, bobUser.userId);
     const bobSocket = await connectClient(server.baseUrl, bobUser.token);
     openSockets.push(aliceSocket, bobSocket);
+    await ready;
 
     aliceSocket.emit("joinRoom", { chatroomId });
     bobSocket.emit("joinRoom", { chatroomId });
-    await wait(200); // let joins land and presence registry settle
+    await wait(200); // joinRoom has no ack; small settle for the room membership
 
     return {
       chatroomId,

@@ -6,8 +6,17 @@ they can pull on. Rehearse the kill-a-pod step; it's the centerpiece.
 
 **Setup before the call:** `docker compose -f docker-compose.scale.yml up
 --build` (nginx LB → 2 backend replicas → shared Mongo + Redis; app on
-:3000). Two browsers (or one normal + one incognito) logged in as two users.
+:3000). Two users in two *isolated* browser contexts — easiest trick: open
+`http://localhost:3000` as user A and `http://127.0.0.1:3000` as user B in
+the same browser. They're different origins, so localStorage/IndexedDB (and
+therefore E2EE keys) are fully separate — no incognito or second profile
+needed. (`127.0.0.1` is in the dev CORS allowlist for exactly this.)
 Terminal visible. Metrics page open in a third tab.
+
+> Verified end-to-end on 2026-08-22 with exactly this setup: setup gate →
+> recovery code → DM → Bob's sidebar shows "🔒 Encrypted message" until he
+> opens it → decrypts; reply decrypts live on Alice's side; safety numbers
+> identical on both; `db.dmmessages` holds only `e2ee/v1` envelopes.
 
 ---
 

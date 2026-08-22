@@ -54,9 +54,12 @@ probing, and an honest account of what impresses vs. what can be attacked.
    across the pod switch, both clients reconnected once, the in-flight
    message retried once onto the survivor, 0 duplicate deliveries. Measured
    failover gap ≈ 2.4 s; steady-state ACK p50 14 ms.
-2. **RFC-vectored crypto** — an E2EE implementation whose every primitive is
-   pinned to official test vectors in CI, with tamper/replay suites; almost
-   no portfolio project does this.
+2. **RFC-vectored crypto, verified live** — every primitive is pinned to
+   official test vectors in CI, with tamper/replay suites; and the full flow
+   was exercised across two isolated browser origins: setup gate, recovery
+   code, X3DH-lite `init` envelope, both chain directions decrypting live,
+   matching 60-digit safety numbers, and a database holding only
+   `e2ee/v1` ciphertext. Almost no portfolio project does either half.
 3. **Five-layer delivery guarantee with a test that double-sends** — the
    exactly-once claim is executable, not aspirational.
 4. **ADRs that reject alternatives** — every major choice names what it
@@ -145,10 +148,18 @@ probing, and an honest account of what impresses vs. what can be attacked.
   Proof the limiter is cluster-wide; also a reminder that test harnesses need
   either token reuse or an explicit bypass in non-prod.
 
+- ~~Uploads lived on a shared Docker volume~~ → `IFileStorage` with
+  `local` and `s3` drivers (`STORAGE_DRIVER`, any S3-compatible endpoint
+  incl. MinIO/R2), multer → memory, replaced avatars reclaimed, S3 driver
+  unit-tested with an injected fake client (ADR-0008).
+- ~~`/user/refresh` shared the generic `/user` bucket~~ → dedicated 30/15 min
+  limiter on top.
+
 **Known gaps an interviewer could press (be ready, or fix next):**
-- **Uploads live on a shared Docker volume**, not object storage — fine for
-  one org, S3+presigned URLs is the named milestone; media is also NOT E2EE
-  in DMs (text envelopes only) — call it out before they do.
+- **DM attachments are not E2EE** (text envelopes only) — call it out before
+  they do; client-side blob encryption before `put()` is the natural
+  follow-on now that storage is abstracted. Direct-to-bucket presigned
+  uploads are the throughput follow-on (ADR-0008 names both).
 - **E2EE DMs are client-side-search-only** by definition (the server holds
   ciphertext); room search uses the `$text` index. Worth stating as a
   feature of the threat model, not a gap.
