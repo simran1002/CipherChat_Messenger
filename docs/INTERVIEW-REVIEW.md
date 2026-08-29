@@ -204,6 +204,16 @@ probing, and an honest account of what impresses vs. what can be attacked.
   `deploy/nginx-lb-ws.conf` with websocket-only clients
   (`VITE_SOCKET_TRANSPORTS=websocket`), since stickiness only ever served
   the long-polling fallback.
+- ~~The room header claimed "end-to-end encrypted"~~ — leftover copy from
+  before the E2EE split that contradicted the documented threat model (rooms
+  are deliberately server-readable, ADR-0004). Caught while screenshotting;
+  now says "exactly-once delivery", which rooms actually guarantee. The
+  lesson stated plainly: every privacy claim in the UI must match the
+  architecture, or the whole threat model reads as marketing.
+- ~~The Vite proxy shadowed the app's `/metrics` route in dev~~ — hard
+  reloads served the backend's Prometheus text instead of the dashboard page
+  (the dashboard's data comes from `/analytics`; the prefix never belonged
+  in the proxy list).
 
 **Performance-engineering pass (measured A/B, same harness):**
 - The message send path performed **4–5 MongoDB round-trips per message**

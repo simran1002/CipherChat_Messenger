@@ -6,7 +6,6 @@ import {
   UsersIcon,
   UserGroupIcon,
   MagnifyingGlassIcon,
-  LockClosedIcon,
   SparklesIcon,
   SignalIcon,
   SignalSlashIcon,
@@ -643,12 +642,13 @@ const ChatroomPage = ({ user }: ChatroomPageProps) => {
               <ArrowLeftIcon className="w-5 h-5 text-gray-400" />
             </Link>
             <div>
+              {/* Rooms are deliberately server-readable (AI features, search —
+                  see ADR-0004); only DMs are E2EE. Never claim otherwise here. */}
               <h1 className="text-base font-semibold text-white flex items-center gap-1.5">
                 {chatroomName}
-                <LockClosedIcon className="w-3.5 h-3.5 text-violet-400" title="End-to-end encrypted" />
               </h1>
               <p className="text-xs text-gray-500">
-                {onlineUsers.length} online · end-to-end encrypted
+                {onlineUsers.length} online · exactly-once delivery
                 {pendingCount > 0 && (
                   <span className="text-yellow-400 ml-2">· {pendingCount} sending…</span>
                 )}

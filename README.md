@@ -22,6 +22,8 @@ conversations in a third-party SaaS — legal clinics, healthcare practices, new
 [Demo script](docs/DEMO.md) ·
 [Interview review](docs/INTERVIEW-REVIEW.md)
 
+<img src="docs/media/screenshots/chatroom.png" alt="A live room: reactions, @mentions, a pinned message, presence roster, typing indicator — over the exactly-once delivery pipeline" width="900"/>
+
 </div>
 
 ---
@@ -68,6 +70,76 @@ flowchart LR
 | **Operator-proof DMs** | X3DH-lite handshake, per-direction HMAC-SHA256 chains, AES-256-GCM with routing-bound AAD, 256-byte padding, session rotation (200 msgs / 7 days), safety numbers, 8-word recovery code — **attachments included** (per-file keys; the server stores an opaque blob and learns neither content nor file type) | crypto pinned to RFC 7748 / 8032 / 5869 + NIST GCM vectors; tamper/replay/out-of-order/rotation tests; verified live across isolated browser origins **and** by a headless protocol client (`chat-front/scripts/bob-headless.mts`); `db.dmmessages.find()` shows only ciphertext |
 | **Failure survival** | 2+ replicas behind nginx `ip_hash`, `@socket.io/redis-adapter` fan-out, per-user rooms, seeded sequence counters, graceful `SIGTERM` drain (`closeIdleConnections`) | the failover verifier above — zero lost, zero duplicated, sequences continuous across the pod switch |
 | **Content-free observability** | prom-client histograms + counters per pod, in-app live metrics dashboard (`/metrics` route) | every metric passes one test: *could this line reveal what someone said?* Counts, latencies, outcomes only |
+
+## The product — one real session
+
+Every shot below comes from a single scripted three-user session against a live
+stack (Playwright driving three isolated browser contexts). The messages, unread
+counts, latency numbers, safety number and ciphertext are all genuine state —
+nothing is mocked or composited.
+
+<table>
+<tr>
+<td width="50%" valign="top">
+<strong>Encrypted DMs — with attachments.</strong> The green chip is load-bearing:
+message bodies and the PDF travel as AES-256-GCM envelopes; name, size and key
+ride <em>inside</em> the sealed payload.<br/><br/>
+<img src="docs/media/screenshots/dm-encrypted.png" alt="An E2EE DM conversation with an encrypted PDF attachment"/>
+</td>
+<td width="50%" valign="top">
+<strong>Safety numbers.</strong> Signal-style 60-digit fingerprint of both
+identity keys — compare out-of-band, mark verified, and any key change after
+that raises a banner.<br/><br/>
+<img src="docs/media/screenshots/safety-number.png" alt="Safety number verification modal"/>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<strong>One-time recovery code.</strong> Keys never leave the browser, so a new
+device needs either this 8-group code (unwraps a server-held opaque blob) or an
+explicit reset that peers can see.<br/><br/>
+<img src="docs/media/screenshots/e2ee-recovery.png" alt="E2EE setup: one-time recovery code with explicit acknowledgment"/>
+</td>
+<td width="50%" valign="top">
+<strong>Rooms dashboard.</strong> Membership roles, private rooms, and unread
+watermarks computed from per-room read sequences — cross-replica, so badges
+survive landing on a different pod.<br/><br/>
+<img src="docs/media/screenshots/dashboard.png" alt="Dashboard with unread badges, roles and a private room"/>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<strong>Content-free observability.</strong> The in-app metrics page reads the
+same registry Prometheus scrapes: delivery rate, dedup hits, live percentiles.
+This session: 16/16 delivered, p95 156 ms.<br/><br/>
+<img src="docs/media/screenshots/metrics.png" alt="Live metrics dashboard: delivery counters and latency percentiles"/>
+</td>
+<td width="50%" valign="top">
+<strong>The landing page states the same claims</strong> the docs defend and the
+tests enforce — measured numbers, not adjectives.<br/><br/>
+<img src="docs/media/screenshots/landing.png" alt="Landing page built around the four guarantees"/>
+</td>
+</tr>
+</table>
+
+**And here is that same DM conversation as the server stores it** — a real
+document from the session above (`db.dmmessages.findOne()`):
+
+```js
+{
+  conversationId:  ObjectId("6a932bd96f5399c27d40d35c"),
+  senderId:        ObjectId("6a932ba06f5399c27d40d1dc"),
+  clientMessageId: "29bcf6e4-c239-49a2-aea1-518bfb562016",   // exactly-once key
+  type: "e2ee/v1",
+  body: "",                                                  // never anything readable
+  envelope: '{"v":1,"sessionId":"0c5b1d48-451c-4a63-8c5f-af6bba6a911e","ctr":0,
+              "ct":"0RRtIwDv2lt4NQ9vz0ftRyCVy5gvt3shymbO5w1Bh6ZxHwKHYviHiYFZAonybvppr…"}'
+}
+```
+
+The PDF attachment message in that thread is byte-indistinguishable from the
+text ones — same envelope shape, slightly bigger `ct`. The server learned
+neither its name, its type, nor that it was a file at all.
 
 ## Measured, not claimed
 

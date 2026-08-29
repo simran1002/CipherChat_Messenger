@@ -10,9 +10,13 @@ import react from "@vitejs/plugin-react";
  * builds bake an absolute VITE_API_URL (see chat-front/Dockerfile).
  */
 const API_TARGET = process.env.VITE_DEV_API_TARGET || "http://localhost:8000";
+// NOTE: no "/metrics" here — that's the app's own metrics-dashboard ROUTE.
+// Proxying it shadowed the page with the backend's Prometheus endpoint on
+// hard reloads. The dashboard's data comes via /analytics; the Prometheus
+// text endpoint is for operators hitting the backend port directly.
 const API_PREFIXES = [
   "/user", "/chatroom", "/dm", "/upload", "/uploads", "/ai", "/presence",
-  "/analytics", "/keys", "/health", "/metrics",
+  "/analytics", "/keys", "/health",
 ];
 
 /**
