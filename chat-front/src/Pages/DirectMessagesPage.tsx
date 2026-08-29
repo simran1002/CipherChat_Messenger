@@ -8,6 +8,7 @@ import {
   ArrowLeftIcon,
   MagnifyingGlassIcon,
   LockClosedIcon,
+  PaperClipIcon,
   ShieldCheckIcon,
 } from "@heroicons/react/24/outline";
 import { makeToast } from "../utils/toast";
@@ -16,6 +17,9 @@ import e2eeService from "../services/E2EEService";
 import { useE2EE, isNoKeysError } from "../hooks/useE2EE";
 import E2EESetupGate from "../components/E2EESetupGate";
 import SafetyNumberModal from "../components/SafetyNumberModal";
+import DmAttachment from "../components/DmAttachment";
+import { encryptFileForDm } from "../crypto/fileCrypto";
+import { parseDmContent, previewDmContent, serializeDmContent } from "../crypto/dmContent";
 import { getCurrentUserId } from "../hooks/useCurrentUser";
 import { stringToColor, getInitials, formatTime, formatDateDivider } from "../utils/helpers";
 import type { AuthUser, DmConversation, DmMessage } from "../types";
@@ -100,11 +104,14 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
   const [currentUserId, setCurrentUserId] = useState("");
   const [keyChangedConvs, setKeyChangedConvs] = useState<Set<string>>(new Set());
   const [showSafetyModal, setShowSafetyModal] = useState(false);
+  /** File name currently being encrypted & uploaded (composer pending strip). */
+  const [pendingUpload, setPendingUpload] = useState<string | null>(null);
 
   const { status: e2eeStatus, refresh: refreshE2EE } = useE2EE();
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -124,7 +131,9 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
           try {
             const preview = await e2eeService.getPreview(conv._id);
             if (preview) {
-              return { ...conv, lastMessage: { ...conv.lastMessage, message: preview } };
+              // Older caches may hold raw serialized content — normalize to a preview line
+              const display = previewDmContent(parseDmContent(preview));
+              return { ...conv, lastMessage: { ...conv.lastMessage, message: display } };
             }
           } catch {
             // keep the server placeholder
@@ -194,7 +203,7 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
       setMessages(normalized);
       const last = normalized[normalized.length - 1];
       if (last?.encrypted && !last.undecryptable) {
-        void e2eeService.cachePreview(conv._id, last.message);
+        void e2eeService.cachePreview(conv._id, previewDmContent(parseDmContent(last.message)));
       }
       setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
     } catch {
@@ -238,7 +247,10 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
           undecryptable = !result.ok;
           if (result.ok) {
             // This is the latest message in the conversation — cache its preview
-            void e2eeService.cachePreview(data.conversationId, text);
+            void e2eeService.cachePreview(
+              data.conversationId,
+              previewDmContent(parseDmContent(text))
+            );
           }
           if (result.keyChanged && !own) {
             setKeyChangedConvs((prev) => {
@@ -249,7 +261,10 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
           }
         }
 
-        const previewText = encrypted && undecryptable ? ENCRYPTED_PLACEHOLDER : text;
+        const previewText =
+          encrypted && undecryptable
+            ? ENCRYPTED_PLACEHOLDER
+            : previewDmContent(parseDmContent(text));
         updateConvPreview(data.conversationId, previewText, encrypted, data.createdAt);
 
         if (!activeConv || data.conversationId !== activeConv._id) return;
@@ -402,6 +417,84 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
         setMessages((prev) => prev.filter((m) => m.clientMessageId !== clientMessageId));
       }
     }
+  };
+
+  /**
+   * Encrypt a picked file, upload the opaque blob, then send the descriptor
+   * through the exact same E2EE send path a text message uses (optimistic
+   * bubble → emit with ack → replace/drop). Attachments are E2EE-only by
+   * design: the descriptor carries the file key, so there is no plaintext
+   * fallback — unlike text.
+   */
+  const sendFile = async (file: File) => {
+    if (!socket || !activeConv) return;
+
+    if (e2eeStatus.state !== "ready") {
+      makeToast("error", "Attachments require encryption to be set up");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      makeToast("error", "File exceeds the 10 MB limit");
+      return;
+    }
+
+    const conversationId = activeConv._id;
+    const peerId = activeConv.participant?._id ?? "";
+    setPendingUpload(file.name);
+
+    let serialized: string;
+    try {
+      const { blob, descriptor } = await encryptFileForDm(file);
+      const fd = new FormData();
+      fd.append("file", blob, "blob.bin"); // blob type is application/octet-stream
+      const res = await api.post("/upload/encrypted", fd);
+      const url = res.data.url as string;
+      serialized = serializeDmContent({ t: "file", file: { ...descriptor, url } });
+    } catch {
+      setPendingUpload(null);
+      makeToast("error", "Failed to encrypt & upload attachment");
+      return;
+    }
+    setPendingUpload(null);
+
+    // Serialized descriptor JSON deliberately skips the typed-text length
+    // guard (the composer's maxLength only applies to keyboard input).
+    const clientMessageId = crypto.randomUUID();
+    const optimistic: DmMessage = {
+      _id: `pending-${clientMessageId}`,
+      type: "e2ee/v1",
+      message: serialized,
+      clientMessageId,
+      encrypted: true,
+      userId: currentUserId || getCurrentUserId() || "",
+      createdAt: new Date().toISOString(),
+      _pending: true,
+    };
+    setMessages((prev) => [...prev, optimistic]);
+    setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+
+    try {
+      const envelope = await e2eeService.encrypt(conversationId, peerId, serialized);
+      emitDirectMessage({ conversationId, clientMessageId, envelope }, clientMessageId);
+      const preview = previewDmContent(parseDmContent(serialized));
+      void e2eeService.cachePreview(conversationId, preview);
+      updateConvPreview(conversationId, preview, true, optimistic.createdAt);
+    } catch (err) {
+      // No plaintext downgrade for attachments — fail loudly either way
+      makeToast(
+        "error",
+        isNoKeysError(err)
+          ? "Can't send attachments — recipient hasn't enabled encryption yet"
+          : "Encryption failed"
+      );
+      setMessages((prev) => prev.filter((m) => m.clientMessageId !== clientMessageId));
+    }
+  };
+
+  const handleFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-picking the same file
+    if (file) void sendFile(file);
   };
 
   const handleTyping = () => {
@@ -561,6 +654,7 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
                 )}
                 {messages.map((msg, index) => {
                   const isMine = msg.userId === currentUserId;
+                  const content = parseDmContent(msg.message);
                   const showE2EEDivider =
                     index > 0 && !messages[index - 1].encrypted && !!msg.encrypted;
                   return (
@@ -587,7 +681,11 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
                         className={`flex ${isMine ? "justify-end" : "justify-start"} mb-2`}
                       >
                         <div className={`max-w-[70%] px-4 py-2.5 rounded-2xl text-sm ${msg._pending ? "opacity-60" : ""} ${isMine ? "bg-gradient-to-r from-primary-500 to-primary-600 text-white rounded-br-md" : "bg-gray-800 text-gray-100 border border-gray-700/50 rounded-bl-md"}`}>
-                          <p className={`leading-relaxed ${msg.undecryptable ? "italic opacity-80" : ""}`}>{msg.message}</p>
+                          {content.t === "file" ? (
+                            <DmAttachment file={content.file} isMine={isMine} />
+                          ) : (
+                            <p className={`leading-relaxed ${msg.undecryptable ? "italic opacity-80" : ""}`}>{content.text}</p>
+                          )}
                           <p className={`text-[10px] mt-1 ${isMine ? "text-primary-200" : "text-gray-500"} text-right`}>{formatTime(msg.createdAt)}</p>
                         </div>
                       </motion.div>
@@ -627,7 +725,33 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
 
           {/* Input */}
           <div className="bg-gray-800/80 backdrop-blur-sm border-t border-gray-700/50 p-3 sm:p-4 shrink-0">
+            {pendingUpload && (
+              <div className="flex items-center gap-2 mb-2 px-1 text-xs text-gray-400">
+                <div className="w-3.5 h-3.5 border-2 border-primary-400 border-t-transparent rounded-full animate-spin shrink-0" />
+                <span className="truncate">Encrypting &amp; uploading {pendingUpload}…</span>
+              </div>
+            )}
             <form onSubmit={sendMessage} className="flex items-center gap-3">
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                onChange={handleFilePick}
+                aria-hidden="true"
+                tabIndex={-1}
+              />
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={!socket || !!pendingUpload}
+                className="p-3 bg-gray-700/50 hover:bg-gray-700 border border-gray-600 text-gray-400 hover:text-gray-200 rounded-xl disabled:opacity-30 transition-all"
+                aria-label="Attach file"
+                title="Attach an encrypted file"
+              >
+                <PaperClipIcon className="w-5 h-5" />
+              </motion.button>
               <input
                 ref={inputRef}
                 type="text"

@@ -45,8 +45,17 @@ const AICoPilot = ({ chatroomId, onSelectSuggestion, isOpen, onClose }: AICoPilo
     try {
       const res = await api.post(`/ai/${chatroomId}/suggest-reply`);
       setSuggestions(res.data.suggestions);
-    } catch {
-      makeToast("error", "Could not generate suggestions");
+    } catch (err) {
+      // Surface the server's reason (e.g. AI not configured) instead of a generic toast
+      const msg =
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
+        "Could not generate suggestions";
+      makeToast(
+        "error",
+        msg.includes("ANTHROPIC_API_KEY")
+          ? "AI features need ANTHROPIC_API_KEY in chat-back/.env"
+          : msg
+      );
     } finally {
       setLoadingSuggestions(false);
     }

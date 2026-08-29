@@ -1,6 +1,6 @@
 import { Message } from "../models/Message.js";
 import { RoomReadState } from "../models/RoomReadState.js";
-import { User } from "../models/User.js";
+import { senderInfo } from "../services/userInfo.js";
 import { dedup, metrics, seqCounter } from "../shared/index.js";
 import { errMessage, logger } from "../utils/logger.js";
 import type { AppServer, AppSocket, SyncResultItem } from "./events.js";
@@ -70,6 +70,11 @@ export function registerDeliveryHandlers(io: AppServer, socket: AppSocket): void
     if (!Array.isArray(messages) || !messages.length) return;
     const results: SyncResultItem[] = [];
 
+    // One sender lookup for the whole batch (this used to be a Mongo
+    // findById PER ITEM inside the loop — 50 queries for a full drain)
+    const sender = await senderInfo(userId);
+    if (!sender) return;
+
     for (const item of messages.slice(0, MAX_SYNC_BATCH)) {
       const { chatroomId, message, clientMessageId } = item;
       if (!chatroomId || !message) continue;
@@ -83,8 +88,6 @@ export function registerDeliveryHandlers(io: AppServer, socket: AppSocket): void
       }
 
       try {
-        const user = await User.findById(userId).select("name dp");
-        if (!user) continue;
         const seq = await seqCounter.next(chatroomId);
         const newMessage = new Message({
           chatroom: chatroomId,
@@ -102,9 +105,9 @@ export function registerDeliveryHandlers(io: AppServer, socket: AppSocket): void
           _id: newMessage._id.toString(),
           type: "text",
           message: message.trim(),
-          name: user.name,
+          name: sender.name,
           userId,
-          dp: user.dp || "",
+          dp: sender.dp,
           sequenceNumber: seq,
           deliveryStatus: "sent",
           createdAt: newMessage.createdAt,

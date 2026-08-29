@@ -15,18 +15,45 @@ const API_PREFIXES = [
   "/analytics", "/keys", "/health", "/metrics",
 ];
 
+/**
+ * Proxied requests are same-origin from the app's point of view, so the
+ * browser's Origin header (which names the Vite port) must not reach the
+ * backend's CORS allowlist — strip it. This makes ANY VITE_PORT work with no
+ * backend config, and CORS stays enforced for genuinely cross-origin callers.
+ */
+import type { ProxyOptions } from "vite";
+
+const stripOrigin: NonNullable<ProxyOptions["configure"]> = (proxy) => {
+  proxy.on("proxyReq", (proxyReq) => proxyReq.removeHeader("origin"));
+  proxy.on("proxyReqWs", (proxyReq) => proxyReq.removeHeader("origin"));
+};
+
 export default defineConfig({
   plugins: [react()],
   server: {
-    port: 3000,
+    // VITE_PORT: run alongside other projects that own :3000 (pairs with
+    // VITE_DEV_API_TARGET for a backend on a non-default port)
+    port: Number(process.env.VITE_PORT) || 3000,
     proxy: {
-      ...Object.fromEntries(API_PREFIXES.map((p) => [p, { target: API_TARGET, changeOrigin: true }])),
-      "/socket.io": { target: API_TARGET, changeOrigin: true, ws: true },
+      ...Object.fromEntries(
+        API_PREFIXES.map((p) => [p, { target: API_TARGET, changeOrigin: true, configure: stripOrigin }])
+      ),
+      "/socket.io": { target: API_TARGET, changeOrigin: true, ws: true, configure: stripOrigin },
     },
   },
   build: {
     outDir: "dist",
     sourcemap: true,
+    rollupOptions: {
+      output: {
+        // Long-lived vendor chunks: app-code edits no longer bust the cached
+        // React/motion bytes (they dominated the entry chunk)
+        manualChunks: {
+          "vendor-react": ["react", "react-dom", "react-router-dom"],
+          "vendor-motion": ["framer-motion"],
+        },
+      },
+    },
   },
   test: {
     environment: "jsdom",

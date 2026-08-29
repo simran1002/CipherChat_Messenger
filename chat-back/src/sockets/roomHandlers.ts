@@ -1,8 +1,8 @@
 import mongoose from "mongoose";
 import { Message } from "../models/Message.js";
 import { RoomReadState } from "../models/RoomReadState.js";
-import { User } from "../models/User.js";
-import { canAccessRoom, ensureMembership, getAccessibleRoom } from "../services/roomAccess.js";
+import { canAccessRoom, ensureMembership, getAccessibleRoomSummary } from "../services/roomAccess.js";
+import { senderInfo } from "../services/userInfo.js";
 import { dedup, metrics, presenceRegistry, rateLimiter, seqCounter, typingMgr } from "../shared/index.js";
 import { messageLatency, messagesTotal } from "../shared/prometheus.js";
 import { errMessage, logger } from "../utils/logger.js";
@@ -21,6 +21,9 @@ export function registerRoomHandlers(io: AppServer, socket: AppSocket): void {
     socket.join(chatroomId);
     const u = await presenceRegistry.get(userId);
     if (u) socket.to(chatroomId).emit("userJoined", { userId, name: u.name });
+    // A page that mounts after the socket connected missed the connect-time
+    // roster broadcast — hand this socket the current roster directly.
+    socket.emit("onlineUsers", await presenceRegistry.list());
   });
 
   socket.on("leaveRoom", ({ chatroomId }) => {
@@ -60,27 +63,28 @@ export function registerRoomHandlers(io: AppServer, socket: AppSocket): void {
         return;
       }
 
-      // Room-level authorization — private rooms accept members only
-      const room = await getAccessibleRoom(chatroomId, userId);
+      // Room-level authorization — cached summary (15s TTL): the send path
+      // used to fetch the full room doc from Mongo for every message
+      const room = await getAccessibleRoomSummary(chatroomId, userId);
       if (!room) {
         if (typeof ackFn === "function") ackFn({ ok: false, error: "forbidden" });
         return;
       }
 
       // Sending is participation — record membership for public-room senders
-      // who never emitted joinRoom (keeps the members list honest)
-      if (!room.members.some((m) => m.user.toString() === userId)) {
-        await ensureMembership(chatroomId, userId).catch(() => {});
+      // who never emitted joinRoom. Idempotent, off the latency path.
+      if (!room.members.some((m) => m.user === userId)) {
+        void ensureMembership(chatroomId, userId).catch(() => {});
       }
 
-      const user = await User.findById(userId).select("name email dp");
+      const user = await senderInfo(userId);
       if (!user) return;
 
       // Sanitize mentions: valid ids, deduped, capped, never yourself. In a
       // private room only members can be mentioned (non-members can't read).
       const mentions = [...new Set(data.mentions ?? [])]
         .filter((id) => mongoose.Types.ObjectId.isValid(id) && id !== userId)
-        .filter((id) => !room.isPrivate || room.members.some((m) => m.user.toString() === id))
+        .filter((id) => !room.isPrivate || room.members.some((m) => m.user === id))
         .slice(0, MAX_MENTIONS);
 
       const seq = await seqCounter.next(chatroomId);
@@ -144,8 +148,9 @@ export function registerRoomHandlers(io: AppServer, socket: AppSocket): void {
       io.to(chatroomId).emit("newMessage", payload);
       metrics.recordDelivered();
 
-      // Sending implies having read everything up to your own message
-      await RoomReadState.updateOne(
+      // Sending implies having read everything up to your own message —
+      // fire-and-forget: badge bookkeeping must not sit on the send path
+      void RoomReadState.updateOne(
         { user: userId, chatroom: chatroomId },
         { $max: { lastReadSequence: seq } },
         { upsert: true }
@@ -180,9 +185,9 @@ export function registerRoomHandlers(io: AppServer, socket: AppSocket): void {
         return;
       }
       if (clientMessageId && (await dedup.check(clientMessageId))) return;
-      if (!(await canAccessRoom(chatroomId, userId))) return;
+      if (!(await getAccessibleRoomSummary(chatroomId, userId))) return;
 
-      const user = await User.findById(userId).select("name email dp");
+      const user = await senderInfo(userId);
       if (!user) return;
 
       const seq = await seqCounter.next(chatroomId);
@@ -269,9 +274,7 @@ export function registerRoomHandlers(io: AppServer, socket: AppSocket): void {
   socket.on("typing", async ({ chatroomId }) => {
     // The presence entry is written asynchronously on connect; a typing event
     // that races it (fast clients, busy pods) must not be silently dropped.
-    const name =
-      (await presenceRegistry.get(userId))?.name ??
-      (await User.findById(userId).select("name").lean())?.name;
+    const name = (await senderInfo(userId))?.name;
     if (!name) return;
     typingMgr.start(chatroomId, userId, name, (expiredId) => {
       socket.to(chatroomId).emit("userStopTyping", { userId: expiredId, chatroomId });

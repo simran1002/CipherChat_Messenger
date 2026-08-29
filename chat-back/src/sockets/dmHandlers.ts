@@ -36,13 +36,39 @@ function validEnvelope(env: unknown): env is DmEnvelope {
   return true;
 }
 
+/**
+ * Conversation participants are immutable (a DM is always the same two
+ * people), so they cache aggressively — the send path used to load the whole
+ * conversation document per message just to authorize and find the peer.
+ */
+const PARTICIPANTS_TTL_MS = 5 * 60 * 1000;
+const PARTICIPANTS_MAX = 2000;
+const participantsCache = new Map<string, { participants: string[]; expiresAt: number }>();
+
+async function conversationParticipants(conversationId: string): Promise<string[] | null> {
+  const hit = participantsCache.get(conversationId);
+  if (hit && hit.expiresAt > Date.now()) return hit.participants;
+
+  if (!mongoose.Types.ObjectId.isValid(conversationId)) return null;
+  const conv = await DirectMessage.findById(conversationId).select("participants").lean();
+  if (!conv) return null;
+  const participants = conv.participants.map((p) => p.toString());
+
+  if (participantsCache.size >= PARTICIPANTS_MAX) {
+    const oldest = participantsCache.keys().next().value;
+    if (oldest !== undefined) participantsCache.delete(oldest);
+  }
+  participantsCache.set(conversationId, { participants, expiresAt: Date.now() + PARTICIPANTS_TTL_MS });
+  return participants;
+}
+
 export function registerDmHandlers(io: AppServer, socket: AppSocket): void {
   const userId = socket.data.userId;
 
   socket.on("joinDM", async ({ conversationId }) => {
     // Only participants may join a DM room (previously unchecked)
-    const isParticipant = await DirectMessage.exists({ _id: conversationId, participants: userId });
-    if (isParticipant) socket.join(`dm:${conversationId}`);
+    const participants = await conversationParticipants(conversationId);
+    if (participants?.includes(userId)) socket.join(`dm:${conversationId}`);
   });
 
   socket.on("leaveDM", ({ conversationId }) => {
@@ -72,8 +98,10 @@ export function registerDmHandlers(io: AppServer, socket: AppSocket): void {
       if (isPlain && message!.length > 2000) return ack({ ok: false, error: "invalid_message" });
       if (isE2ee && !validEnvelope(envelope)) return ack({ ok: false, error: "invalid_message" });
 
-      const conv = await DirectMessage.findOne({ _id: conversationId, participants: userId });
-      if (!conv) return ack({ ok: false, error: "not_participant" });
+      const participants = await conversationParticipants(conversationId);
+      if (!participants || !participants.includes(userId)) {
+        return ack({ ok: false, error: "not_participant" });
+      }
 
       // Idempotent retries
       if (clientMessageId) {
@@ -106,8 +134,10 @@ export function registerDmHandlers(io: AppServer, socket: AppSocket): void {
         throw err;
       }
 
-      conv.lastMessageAt = new Date();
-      await conv.save();
+      // Conversation-ordering metadata — off the ack path
+      void DirectMessage.updateOne({ _id: conversationId }, { lastMessageAt: new Date() }).catch(
+        () => {}
+      );
 
       const sender = await presenceRegistry.get(userId);
       const wire = {
@@ -126,7 +156,7 @@ export function registerDmHandlers(io: AppServer, socket: AppSocket): void {
       ack({ ok: true, messageId: saved._id.toString() });
       io.to(`dm:${conversationId}`).emit("newDirectMessage", wire);
 
-      const otherId = conv.participants.find((p) => p.toString() !== userId)?.toString();
+      const otherId = participants.find((p) => p !== userId);
       if (otherId) {
         // Per-user room — reaches the recipient on ANY replica via the Redis
         // adapter. Content-free for E2EE messages: the server has nothing to

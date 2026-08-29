@@ -14,7 +14,6 @@ import {
 import { makeToast } from "../utils/toast";
 import api from "../services/api";
 import notificationService from "../services/NotificationService";
-import * as heartbeatSvc from "../services/HeartbeatService";
 import { drain as drainOfflineQueue } from "../services/OfflineQueue";
 import { useMessageDelivery } from "../hooks/useMessageDelivery";
 import { getCurrentUserId } from "../hooks/useCurrentUser";
@@ -157,11 +156,10 @@ const ChatroomPage = ({ user }: ChatroomPageProps) => {
     notificationService.requestPermission();
   }, []);
 
-  // Heartbeat — start when socket connects, drain offline queue
+  // Connection state + offline-queue drain (the presence heartbeat lives at
+  // the App level for the socket's whole lifetime — see App.tsx)
   useEffect(() => {
     if (!socket) return;
-
-    heartbeatSvc.start(socket);
 
     const handleConnect = async () => {
       setIsConnected(true);
@@ -177,7 +175,6 @@ const ChatroomPage = ({ user }: ChatroomPageProps) => {
     if (socket.connected) drainOfflineQueue(socket);
 
     return () => {
-      heartbeatSvc.stop();
       socket.off("connect", handleConnect);
       socket.off("disconnect", handleDisconnect);
     };

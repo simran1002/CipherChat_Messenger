@@ -45,6 +45,8 @@ replaced files.
 - S3 mode needs bucket/CDN configuration and the default AWS credential
   chain; local mode needs a shared volume for multi-replica — the compose
   demo keeps the volume so it runs with zero cloud dependencies.
-- Attachments in DMs are **not** E2EE (text envelopes only) — unchanged by
-  this ADR and stated in the threat model; encrypting blobs client-side
-  before `put()` is the natural follow-on.
+- DM attachments ARE E2EE (added as the follow-on this ADR anticipated):
+  the client seals each file with a per-file AES-256-GCM key and uploads the
+  ciphertext to `/upload/encrypted` (octet-stream only, no metadata echo);
+  the key and real metadata travel only inside the message envelope. Room
+  attachments remain server-readable, consistent with ADR-0004.

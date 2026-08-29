@@ -9,17 +9,13 @@ export async function broadcastOnlineUsers(io: AppServer): Promise<void> {
 }
 
 /** Connect-time bookkeeping: mark online, register presence, arm heartbeat. */
-export async function handleConnect(io: AppServer, socket: AppSocket): Promise<void> {
+/** Mark the user online in the DB + roster and tell everyone. */
+async function registerPresence(io: AppServer, socket: AppSocket): Promise<void> {
   const userId = socket.data.userId;
-  logger.info("Socket connected", { userId });
-  metrics.userConnected();
-  socketsConnected.inc();
-
   try {
     const user = await User.findByIdAndUpdate(userId, { isOnline: true }, { new: true }).select(
       "name email dp presenceStatus presenceNote"
     );
-
     if (user) {
       await presenceRegistry.set(userId, {
         socketId: socket.id,
@@ -32,10 +28,12 @@ export async function handleConnect(io: AppServer, socket: AppSocket): Promise<v
       await broadcastOnlineUsers(io);
     }
   } catch (err) {
-    logger.error("Error on connect", { error: errMessage(err) });
+    logger.error("Error registering presence", { error: errMessage(err) });
   }
+}
 
-  // Presence heartbeat — auto-offline if the client stops pinging (~60s)
+/** (Re)arm the liveness timer — auto-offline if the client stops pinging (~60s). */
+function armHeartbeat(io: AppServer, userId: string): void {
   heartbeat.beat(userId, async (staleUserId) => {
     logger.info("Heartbeat timeout — marking offline", { userId: staleUserId });
     await presenceRegistry.delete(staleUserId);
@@ -48,13 +46,30 @@ export async function handleConnect(io: AppServer, socket: AppSocket): Promise<v
   });
 }
 
+/** Connect-time bookkeeping: mark online, register presence, arm heartbeat. */
+export async function handleConnect(io: AppServer, socket: AppSocket): Promise<void> {
+  logger.info("Socket connected", { userId: socket.data.userId });
+  metrics.userConnected();
+  socketsConnected.inc();
+  await registerPresence(io, socket);
+  armHeartbeat(io, socket.data.userId);
+}
+
 export function registerPresenceHandlers(io: AppServer, socket: AppSocket): void {
   const userId = socket.data.userId;
 
-  socket.on("heartbeat", () => {
-    heartbeat.refresh(userId);
-    // Refresh the Redis presence TTL (safety net if this pod dies uncleanly)
-    void presenceRegistry.touch(userId);
+  socket.on("heartbeat", async () => {
+    // Self-heal: a socket that was timed out of the roster (client paused,
+    // laptop slept) but is still connected re-registers on its next ping
+    // instead of staying invisible until it reconnects.
+    if (!(await presenceRegistry.get(userId))) {
+      await registerPresence(io, socket);
+      armHeartbeat(io, userId);
+    } else {
+      heartbeat.refresh(userId);
+      // Refresh the Redis presence TTL (safety net if this pod dies uncleanly)
+      void presenceRegistry.touch(userId);
+    }
     socket.emit("heartbeatAck", { ts: Date.now() });
   });
 

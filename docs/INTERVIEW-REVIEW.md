@@ -177,11 +177,43 @@ probing, and an honest account of what impresses vs. what can be attacked.
 - ~~No demo recording in the README~~ → real-output terminal render (SVG) of
   the failover PASS, linked to the reproducible script.
 
+- ~~DM attachments were not E2EE~~ → each file is sealed client-side with its
+  own AES-256-GCM key and uploaded as `application/octet-stream` to a
+  dedicated `/upload/encrypted` route; key/IV/name/MIME/size travel only
+  inside the E2EE envelope (a `__dmc` JSON content protocol that keeps plain
+  text byte-compatible). The server can't learn even the file *type*.
+  Tamper = GCM failure rendered as an inline error. Tests: round-trip,
+  fresh-key-per-file, tamper/wrong-key, hostile-JSON fallback, route
+  MIME-isolation.
+
+**Performance-engineering pass (measured A/B, same harness):**
+- The message send path performed **4–5 MongoDB round-trips per message**
+  (room doc, sender doc, watermark upsert, membership guard, insert). Now:
+  a 15s-TTL room-summary cache (invalidated on membership mutations),
+  sender info from the presence registry (DB only as fallback), watermark +
+  participation writes moved off the latency path, and the offline-drain
+  loop's per-item sender lookup hoisted (was 50 queries per drain). DM sends
+  similarly: immutable participants cached, `lastMessageAt` fire-and-forget.
+- **A/B on the identical harness** (20 senders × 1/s, one room,
+  `scripts/loadgen.mts`, dev server + Atlas): ACK RTT p50 **284 → ~100 ms**,
+  p95 **489 → ~195 ms** — the remaining ~100 ms is the single message-insert
+  RTT to Atlas, i.e. the floor.
+- **The speedup exposed a latent race** (the best part of the story): the
+  in-memory SequenceCounter interleaved read → await-seed → write, so
+  concurrent sends on a cold room drew duplicate sequence numbers once the
+  extra DB fetches stopped accidentally serializing them. The DB's unique
+  `{chatroom, sequenceNumber}` backstop caught it exactly as designed (the
+  flood test failed 19/30 with server_error). Fixed with a single-flight
+  seed + synchronous increment; two regression tests pin it. "Optimizations
+  change timing; timing changes expose races; backstops are why you have
+  them" — say this sentence in the interview.
+- Frontend: emoji-mart's dataset now lazy-loads on first picker open —
+  chatroom chunk **526 → 107 KB** (gzip 130 → 30); React/motion split into
+  long-cacheable vendor chunks (first-load gzip ≈ −38%).
+
 **Known gaps an interviewer could press (be ready, or fix next):**
-- **DM attachments are not E2EE** (text envelopes only) — call it out before
-  they do; client-side blob encryption before `put()` is the natural
-  follow-on now that storage is abstracted. Direct-to-bucket presigned
-  uploads are the throughput follow-on (ADR-0008 names both).
+- **Direct-to-bucket presigned uploads** remain the throughput follow-on for
+  attachments (ADR-0008); today ciphertext still transits the API pod.
 - **E2EE DMs are client-side-search-only** by definition (the server holds
   ciphertext); room search uses the `$text` index. Worth stating as a
   feature of the threat model, not a gap.

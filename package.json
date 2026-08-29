@@ -1,16 +1,33 @@
 {
-  "name": "cipher-messenger",
-  "version": "1.0.0",
-  "description": "A modern MERN stack chat application",
-  "main": "index.js",
-  "scripts": {
-    "start": "echo \"Starting both frontend and backend...\" && start cmd /k \"cd chat-back && npm start\" && start cmd /k \"cd chat-front && npm start\"",
-    "server": "cd chat-back && npm start",
-    "client": "cd chat-front && npm start",
-    "dev": "echo \"Starting both frontend and backend...\" && start cmd /k \"cd chat-back && npm start\" && start cmd /k \"cd chat-front && npm start\"",
-    "install-all": "cd chat-back && npm install && cd ../chat-front && npm install"
+  "name": "cipherchat-messenger",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Self-hostable secure team messaging: exactly-once delivery, E2EE DMs (messages + attachments), Redis-backed horizontal scaling, content-free observability — with the tests and live demos to prove all four.",
+  "license": "MIT",
+  "author": "Simran Yadav",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/simran1002/CipherChat_Messenger.git"
   },
-  "keywords": ["chat", "messenger", "mern", "react", "nodejs"],
-  "author": "",
-  "license": "ISC"
+  "keywords": [
+    "e2ee",
+    "end-to-end-encryption",
+    "chat",
+    "socket-io",
+    "redis",
+    "typescript",
+    "react",
+    "exactly-once",
+    "distributed-systems"
+  ],
+  "scripts": {
+    "install-all": "cd chat-back && npm install && cd ../chat-front && npm install",
+    "dev:back": "cd chat-back && npm run dev",
+    "dev:front": "cd chat-front && npm run dev",
+    "test": "cd chat-back && npm test && cd ../chat-front && npm test",
+    "typecheck": "cd chat-back && npm run typecheck && cd ../chat-front && npm run typecheck",
+    "demo:failover": "cd chat-back && npm run demo:failover",
+    "stack": "docker compose up --build",
+    "stack:scale": "docker compose -f docker-compose.scale.yml up --build -d"
+  }
 }

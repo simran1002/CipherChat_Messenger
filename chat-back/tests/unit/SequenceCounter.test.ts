@@ -45,3 +45,24 @@ describe("SequenceCounter (per-room monotonic)", () => {
     expect(seed).toHaveBeenLastCalledWith("room-2");
   });
 });
+
+describe("SequenceCounter — concurrency", () => {
+  it("issues strictly unique numbers under concurrent fire on a cold room", async () => {
+    // Slow seed widens the race window an earlier version lost: concurrent
+    // callers interleaved read→await→write and drew duplicate numbers.
+    const counter = new SequenceCounter(
+      () => new Promise((r) => setTimeout(() => r(100), 20))
+    );
+    const results = await Promise.all(Array.from({ length: 50 }, () => counter.next("cold-room")));
+    expect(new Set(results).size).toBe(50);
+    expect(Math.min(...results)).toBe(101);
+    expect(Math.max(...results)).toBe(150);
+  });
+
+  it("seed source is called exactly once per room even under concurrency", async () => {
+    let calls = 0;
+    const counter = new SequenceCounter(async () => { calls++; return 0; });
+    await Promise.all(Array.from({ length: 20 }, () => counter.next("one-seed")));
+    expect(calls).toBe(1);
+  });
+});

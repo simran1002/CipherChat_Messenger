@@ -6,6 +6,7 @@ import Toaster from "./components/Toaster";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { SocketContext } from "./contexts/SocketContext";
 import api, { getSocketUrl, refreshAccessToken } from "./services/api";
+import * as heartbeatSvc from "./services/HeartbeatService";
 import type { AppSocket, AuthUser } from "./types";
 
 const IndexPage = lazy(() => import("./Pages/IndexPage"));
@@ -55,6 +56,14 @@ function App() {
 
       newSocket.on("connect", () => {
         window.makeToast?.("success", "Connected to chat server");
+        // Presence heartbeat for the socket's whole lifetime — it used to run
+        // only while the chatroom page was mounted, so users browsing the
+        // dashboard/profile/DMs were marked offline after ~60s.
+        heartbeatSvc.start(newSocket);
+      });
+
+      newSocket.on("disconnect", () => {
+        heartbeatSvc.stop();
       });
 
       newSocket.on("disconnect", (reason) => {
@@ -82,6 +91,7 @@ function App() {
   const handleLogout = useCallback(() => {
     // Revoke the refresh session server-side (best-effort)
     void api.post("/user/logout", null, { withCredentials: true }).catch(() => {});
+    heartbeatSvc.stop();
     if (socketRef.current) {
       socketRef.current.disconnect();
       socketRef.current = null;

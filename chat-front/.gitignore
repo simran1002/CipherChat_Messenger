@@ -27,3 +27,6 @@ yarn-error.log*
 
 # local dev env (VITE_API_URL); copy from .env.example
 .env
+
+# headless verification client state (holds a token + private test keys)
+scripts/bob-state.json

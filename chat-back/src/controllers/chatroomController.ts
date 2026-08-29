@@ -5,7 +5,13 @@ import { Message } from "../models/Message.js";
 import { RoomReadState } from "../models/RoomReadState.js";
 import { User } from "../models/User.js";
 import { HttpError } from "../errors/HttpError.js";
-import { assertRoomAccess, assertRole, ensureMembership, memberRole } from "../services/roomAccess.js";
+import {
+  assertRoomAccess,
+  assertRole,
+  ensureMembership,
+  invalidateRoomCache,
+  memberRole,
+} from "../services/roomAccess.js";
 import { logger } from "../utils/logger.js";
 
 const NAME_REGEX = /^[A-Za-z0-9\s\-_]+$/;
@@ -380,6 +386,7 @@ export async function leaveRoom(req: Request, res: Response): Promise<void> {
     );
 
   await Chatroom.updateOne({ _id: chatroomId }, { $pull: { members: { user: userId } } });
+  invalidateRoomCache(chatroomId);
   res.json({ message: "Left the room.", chatroomId });
 }
 
@@ -410,6 +417,7 @@ export async function updateMemberRole(req: Request, res: Response): Promise<voi
     { _id: chatroomId, "members.user": targetId },
     { $set: { "members.$.role": role } }
   );
+  invalidateRoomCache(chatroomId);
   logger.info("Room role updated", { chatroomId, targetId, role, by: req.payload!.id });
   res.json({ message: "Role updated.", userId: targetId, role });
 }
