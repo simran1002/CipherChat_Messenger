@@ -66,8 +66,10 @@ rather than hidden:
   confirmed: `backend2` processed 0 messages). Real user populations spread
   by IP; load generators don't. The per-pod ceiling above is therefore the
   honest single-pod number, and horizontal headroom comes from IP diversity
-  — or from a websocket-only deployment with `least_conn` (trade-off: the
-  long-polling fallback then needs another stickiness mechanism).
+  — or from the shipped websocket-only `least_conn` profile
+  (`npm run stack:scale:ws`, `deploy/nginx-lb-ws.conf`), which balances by
+  live connection count at the cost of the long-polling fallback: clients
+  behind websocket-hostile proxies can't connect at all on that profile.
 - **Fan-out, not message rate, is the cost driver.** Delivery load = sends ×
   room size. The scale assumption "≤ 500 sockets/pod, ~200 msg/s org-wide"
   holds only with realistic room sizes; a 50-person room where everyone

@@ -18,6 +18,13 @@ const DirectMessagesPage = lazy(() => import("./Pages/DirectMessagesPage"));
 const ProfilePage = lazy(() => import("./Pages/ProfilePage"));
 const MetricsDashboardPage = lazy(() => import("./Pages/MetricsDashboardPage"));
 
+// Baked at build time. "websocket" alone (the least_conn LB profile) drops the
+// HTTP long-polling fallback — the one thing that forces sticky sessions.
+const SOCKET_TRANSPORTS = (import.meta.env.VITE_SOCKET_TRANSPORTS || "websocket,polling")
+  .split(",")
+  .map((t) => t.trim())
+  .filter((t): t is "websocket" | "polling" => t === "websocket" || t === "polling");
+
 // Hoisted out of App() — an inline definition re-created the component type on
 // every render and remounted the whole protected subtree.
 function ProtectedRoute({ children }: { children: ReactNode }) {
@@ -51,7 +58,7 @@ function App() {
         // form re-reads storage on every reconnect attempt, so a token rotated
         // by the silent-refresh interceptor is picked up automatically.
         auth: (cb) => cb({ token: localStorage.getItem("CC_Token") }),
-        transports: ["websocket", "polling"],
+        transports: SOCKET_TRANSPORTS,
       });
 
       newSocket.on("connect", () => {

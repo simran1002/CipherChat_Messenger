@@ -3,6 +3,7 @@ import { createAdapter } from "@socket.io/redis-adapter";
 import type { Server as HttpServer } from "node:http";
 import { verifyToken } from "../middlewares/auth.js";
 import { createRedisConnection, redisEnabled } from "../config/redis.js";
+import { typingMgr } from "../shared/index.js";
 import { logger } from "../utils/logger.js";
 import type { AppServer } from "./events.js";
 import { registerDeliveryHandlers } from "./deliveryHandlers.js";
@@ -28,6 +29,16 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
     io.adapter(createAdapter(pubClient, subClient));
     logger.info("Socket.IO Redis adapter enabled");
   }
+
+  // Typing expiry → stopTyping broadcast. Scope decides the fan-out:
+  // "pod-local" = every pod heard the same Redis keyspace notification, so
+  // each emits only to its own sockets (io.local) — the pods jointly cover
+  // the room exactly once. "cluster" = only this instance saw the expiry
+  // (in-memory timers / Redis fallback), so it broadcasts via the adapter.
+  typingMgr.onExpire((chatroomId, userId, scope) => {
+    const target = scope === "pod-local" ? io.local : io;
+    target.to(chatroomId).emit("userStopTyping", { userId, chatroomId });
+  });
 
   // ── Socket auth ─────────────────────────────────────────────────────────
   io.use((socket, next) => {

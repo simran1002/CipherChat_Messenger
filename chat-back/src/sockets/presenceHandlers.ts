@@ -89,7 +89,7 @@ export function registerPresenceHandlers(io: AppServer, socket: AppSocket): void
   socket.on("disconnect", async () => {
     logger.info("Socket disconnected", { userId });
     heartbeat.clear(userId);
-    typingMgr.clearUser(userId);
+    void typingMgr.clearUser(userId);
     await rateLimiter.clear(userId);
     metrics.userDisconnected();
     socketsConnected.dec();

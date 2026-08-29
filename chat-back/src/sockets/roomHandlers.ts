@@ -28,7 +28,7 @@ export function registerRoomHandlers(io: AppServer, socket: AppSocket): void {
 
   socket.on("leaveRoom", ({ chatroomId }) => {
     socket.leave(chatroomId);
-    typingMgr.stop(chatroomId, userId);
+    void typingMgr.stop(chatroomId, userId);
   });
 
   // ── Text message — ACK + dedup + sequence + rate limit ────────────────────
@@ -276,14 +276,13 @@ export function registerRoomHandlers(io: AppServer, socket: AppSocket): void {
     // that races it (fast clients, busy pods) must not be silently dropped.
     const name = (await senderInfo(userId))?.name;
     if (!name) return;
-    typingMgr.start(chatroomId, userId, name, (expiredId) => {
-      socket.to(chatroomId).emit("userStopTyping", { userId: expiredId, chatroomId });
-    });
+    // Expiry broadcast is wired centrally (sockets/index.ts) via typingMgr.onExpire.
+    await typingMgr.start(chatroomId, userId, name);
     socket.to(chatroomId).emit("userTyping", { userId, name, chatroomId });
   });
 
   socket.on("stopTyping", ({ chatroomId }) => {
-    typingMgr.stop(chatroomId, userId);
+    void typingMgr.stop(chatroomId, userId);
     socket.to(chatroomId).emit("userStopTyping", { userId, chatroomId });
   });
 }

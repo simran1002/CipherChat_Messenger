@@ -11,7 +11,7 @@ conversations in a third-party SaaS — legal clinics, healthcare practices, new
 
 ![CI](https://github.com/simran1002/CipherChat_Messenger/actions/workflows/ci.yml/badge.svg)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6)
-![Tests](https://img.shields.io/badge/tests-257-brightgreen)
+![Tests](https://img.shields.io/badge/tests-266-brightgreen)
 ![E2EE](https://img.shields.io/badge/E2EE-AES--256--GCM%20%2B%20X3DH-8b5cf6)
 ![Scale](https://img.shields.io/badge/scale--out-Redis%20%2B%20nginx-dc382d)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -91,11 +91,14 @@ Same-harness A/B and load numbers (methodology + caveats in [WHY-DIFFERENT](docs
 - **Rooms** (server-readable team spaces): membership + roles (owner/admin/member), private
   rooms with invites, unread watermarks with dashboard badges, @mentions with cross-replica
   notifications, virtualized message list with cursor pagination, pinned messages, `$text`
-  search, reactions, replies, edit/delete, self-destruct TTL messages, typing indicators with
-  server-side TTL (no ghost typers), presence with heartbeat (no ghost online), AI summaries /
+  search, reactions, replies, edit/delete, self-destruct TTL messages, typing indicators as
+  Redis TTL keys (a killed pod can't leave ghost typers), presence with heartbeat (no ghost
+  online), AI summaries /
   reply suggestions / tone (Claude), file/voice/location messages.
-- **DMs** (end-to-end encrypted): everything the server can't read — including attachments —
-  with an encrypted sidebar preview cache, key-change banners, safety-number verification,
+- **DMs** (end-to-end encrypted): everything the server can't read — including attachments,
+  which upload straight to object storage via presigned PUT when configured (the ciphertext
+  never transits the app server) — with an encrypted sidebar preview cache, key-change
+  banners, safety-number verification,
   restore/reset flows, an offline queue of pre-sealed envelopes, and legacy-plaintext history
   clearly demarcated.
 - **Auth & sessions:** 15-minute access tokens + rotating refresh cookie (hashed at rest,
@@ -110,6 +113,9 @@ docker compose up --build            # app → http://localhost:3000
 
 # Horizontal-scaling demo (nginx LB → 2 backend replicas)
 docker compose -f docker-compose.scale.yml up --build
+
+# Same, but websocket-only clients behind least_conn (no sticky sessions)
+npm run stack:scale:ws
 ```
 
 Local development — no Docker, no `.env` needed (the Vite proxy handles everything):
@@ -126,11 +132,11 @@ strips the Origin header, so no CORS config is ever needed in dev. Without `REDI
 backend runs single-node on in-memory implementations of the same interfaces
 ([ADR-0002](docs/adr/0002-redis-behind-interfaces.md)).
 
-## Tests & CI — 257 automated tests
+## Tests & CI — 266 automated tests
 
 ```bash
-cd chat-back  && npm test               # 116 unit + socket integration (mongodb-memory-server)
-cd chat-front && npm test               # 141: components, hooks, offline queue, crypto KATs
+cd chat-back  && npm test               # 121 unit + socket integration (mongodb-memory-server)
+cd chat-front && npm test               # 145: components, hooks, offline queue, crypto KATs
 k6 run load/k6-chat.js                  # threshold p95 ACK < 250ms (measured 176ms @ 10 rooms)
 cd chat-back && npm run demo:failover   # the kill-a-pod assertion
 cd chat-back && npx tsx scripts/loadgen.mts   # hot-room ACK-RTT percentiles (perf A/B harness)

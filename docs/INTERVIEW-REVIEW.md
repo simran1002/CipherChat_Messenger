@@ -142,7 +142,11 @@ probing, and an honest account of what impresses vs. what can be attacked.
 - **IP-hash stickiness makes single-source load tests one-pod tests** —
   Prometheus showed `backend2` at zero during both k6 runs. That's a property
   of `ip_hash`, not a bug, but it means "2 pods" in the demo proves shared
-  state + failover, while the throughput numbers are per-pod.
+  state + failover, while the throughput numbers are per-pod. The shipped
+  websocket-only `least_conn` profile (`npm run stack:scale:ws`) removes the
+  stickiness requirement entirely — the follow-up question is "why can you
+  drop ip_hash there?", and the answer is "stickiness only ever existed for
+  the long-polling fallback."
 - **The `/user` rate limiter (100/15 min/IP, Redis-shared) bites load-test
   setup** — 50 registrations per run from one IP; documented in the script.
   Proof the limiter is cluster-wide; also a reminder that test harnesses need
@@ -185,6 +189,21 @@ probing, and an honest account of what impresses vs. what can be attacked.
   Tamper = GCM failure rendered as an inline error. Tests: round-trip,
   fresh-key-per-file, tamper/wrong-key, hostile-JSON fallback, route
   MIME-isolation.
+- ~~Attachment ciphertext transited the API pod~~ → `POST
+  /upload/encrypted/presign` + browser-direct PUT when object storage is
+  configured; the signature pins content type AND exact byte length, so the
+  server-side size cap holds bucket-side too. Local driver answers 501 and
+  the client falls back to the proxied route — tests cover both paths on
+  both sides (ADR-0008).
+- ~~Typing TTL timers were per-pod (a killed pod could leave ghost
+  typers)~~ → Redis TTL keys + keyspace notifications: every pod hears the
+  expiry and clears its local sockets, so the indicator dies with the key,
+  not with the pod. Falls back to per-pod timers where `CONFIG SET` is
+  disabled (managed Redis); exercised against real Redis in CI.
+- ~~`least_conn` was documented-only~~ → shipped as a compose override +
+  `deploy/nginx-lb-ws.conf` with websocket-only clients
+  (`VITE_SOCKET_TRANSPORTS=websocket`), since stickiness only ever served
+  the long-polling fallback.
 
 **Performance-engineering pass (measured A/B, same harness):**
 - The message send path performed **4–5 MongoDB round-trips per message**
@@ -212,8 +231,6 @@ probing, and an honest account of what impresses vs. what can be attacked.
   long-cacheable vendor chunks (first-load gzip ≈ −38%).
 
 **Known gaps an interviewer could press (be ready, or fix next):**
-- **Direct-to-bucket presigned uploads** remain the throughput follow-on for
-  attachments (ADR-0008); today ciphertext still transits the API pod.
 - **E2EE DMs are client-side-search-only** by definition (the server holds
   ciphertext); room search uses the `$text` index. Worth stating as a
   feature of the threat model, not a gap.

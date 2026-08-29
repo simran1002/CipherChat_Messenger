@@ -20,6 +20,10 @@ flowchart LR
 
 - `ip_hash` keeps Socket.IO's long-polling fallback pinned to one pod;
   message fan-out **between** pods rides the Redis adapter, not nginx.
+  A websocket-only `least_conn` profile ships alongside it
+  (`npm run stack:scale:ws`): no polling → no stickiness requirement →
+  balancing by live connection count, at the cost of any fallback for
+  websocket-hostile networks.
 - Per-user rooms (`user:{id}`) address "all of this user's sockets" across
   every pod — raw socketId targeting silently dropped cross-pod messages.
 - `docker-compose.scale.yml` runs this exact topology locally; killing

@@ -28,12 +28,12 @@ at boot by `REDIS_URL` (`src/shared/index.ts`):
 | Sequences | `INCR seq:{room}`, seeded from Mongo max via `SET NX` (restart-safe) |
 | Rate limit | Lua token bucket (single atomic script — no read-modify-write race) |
 | Presence | Hash + index set with TTL (dead-pod safety net; `list()` prunes) |
+| Typing | `SET typing:{room}:{user} PX 4000` + keyspace notifications — every pod hears the expiry and clears its local sockets, so a killed pod can't leave ghost typers (falls back to per-pod timers where `CONFIG SET` is disabled) |
 | Fan-out | `@socket.io/redis-adapter`; per-user rooms `user:{id}` replace socketId targeting |
 
-Deliberately NOT in Redis: typing-indicator TTL timers and heartbeat
-miss-counters (socket-affine under sticky sessions — the expiry broadcast
-travels through the adapter anyway), and per-process Prometheus counters
-(aggregation is the scraper's job).
+Deliberately NOT in Redis: heartbeat miss-counters (socket-affine under
+sticky sessions — the Redis presence TTL is the cross-pod safety net) and
+per-process Prometheus counters (aggregation is the scraper's job).
 
 ## Trade-off
 - Two implementations to maintain per concern; the interfaces keep them

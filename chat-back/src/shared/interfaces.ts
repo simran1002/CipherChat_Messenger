@@ -22,10 +22,24 @@ export interface ISequenceCounter {
   current(chatroomId: string): Promise<number>;
 }
 
+/**
+ * How far the caller's expiry broadcast must travel:
+ * - "cluster": only this manager instance saw the expiry (in-memory timers,
+ *   or the Redis fallback mode) — broadcast through the adapter so every
+ *   pod's sockets hear it.
+ * - "pod-local": every pod's manager fires the same expiry (Redis keyspace
+ *   notifications reach all subscribers) — broadcast to local sockets only,
+ *   or the room hears it once per pod.
+ */
+export type TypingExpiryScope = "cluster" | "pod-local";
+
 export interface ITypingStateManager {
-  start(chatroomId: string, userId: string, name: string, onExpire: (userId: string) => void): void;
-  stop(chatroomId: string, userId: string): void;
-  clearUser(userId: string): void;
+  /** Single expiry handler, wired once at socket-server setup. */
+  onExpire(handler: (chatroomId: string, userId: string, scope: TypingExpiryScope) => void): void;
+  start(chatroomId: string, userId: string, name: string): void | Promise<void>;
+  stop(chatroomId: string, userId: string): void | Promise<void>;
+  clearUser(userId: string): void | Promise<void>;
+  dispose(): void | Promise<void>;
 }
 
 export interface IPresenceHeartbeat {

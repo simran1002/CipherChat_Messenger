@@ -1,16 +1,21 @@
-import type { ITypingStateManager } from "./interfaces.js";
+import type { ITypingStateManager, TypingExpiryScope } from "./interfaces.js";
 
 /**
- * TTL-based typing state per room.
+ * TTL-based typing state per room (in-memory, single node).
  * Solves the "ghost typing" problem — if a client disconnects mid-type
  * without emitting stopTyping, the state auto-expires after ttlMs.
  */
 export class TypingStateManager implements ITypingStateManager {
   private readonly rooms = new Map<string, Map<string, { name: string; timer: NodeJS.Timeout }>>();
+  private handler: (chatroomId: string, userId: string, scope: TypingExpiryScope) => void = () => {};
 
   constructor(private readonly ttlMs = 4000) {}
 
-  start(chatroomId: string, userId: string, name: string, onExpire: (userId: string) => void): void {
+  onExpire(handler: (chatroomId: string, userId: string, scope: TypingExpiryScope) => void): void {
+    this.handler = handler;
+  }
+
+  start(chatroomId: string, userId: string, name: string): void {
     let room = this.rooms.get(chatroomId);
     if (!room) {
       room = new Map();
@@ -22,7 +27,8 @@ export class TypingStateManager implements ITypingStateManager {
 
     const timer = setTimeout(() => {
       this.deleteEntry(chatroomId, userId);
-      onExpire(userId);
+      // Only this instance saw the expiry — the caller must fan out cluster-wide.
+      this.handler(chatroomId, userId, "cluster");
     }, this.ttlMs);
     timer.unref();
 
@@ -41,6 +47,13 @@ export class TypingStateManager implements ITypingStateManager {
       if (entry) clearTimeout(entry.timer);
       this.deleteEntry(chatroomId, userId, room);
     }
+  }
+
+  dispose(): void {
+    for (const room of this.rooms.values()) {
+      for (const entry of room.values()) clearTimeout(entry.timer);
+    }
+    this.rooms.clear();
   }
 
   /** Delete the user's entry and GC the room map when it empties (old impl leaked these). */

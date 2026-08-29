@@ -68,4 +68,40 @@ describe("encrypted blob upload", () => {
     });
     expect(res.status).toBe(401);
   });
+
+  describe("POST /upload/encrypted/presign", () => {
+    async function presign(size: unknown, authToken = token): Promise<Response> {
+      return fetch(`${server.baseUrl}/upload/encrypted/presign`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ size }),
+      });
+    }
+
+    it("answers 501 presign_unsupported on the local-disk driver (client falls back)", async () => {
+      const res = await presign(1024);
+      expect(res.status).toBe(501);
+      const body = (await res.json()) as { code?: string };
+      expect(body.code).toBe("presign_unsupported");
+    });
+
+    it("rejects invalid sizes with 400 before the driver-capability check", async () => {
+      for (const bad of [0, -5, 1.5, "big", null, 11 * 1024 * 1024]) {
+        const res = await presign(bad);
+        expect(res.status).toBe(400);
+      }
+    });
+
+    it("requires auth", async () => {
+      const res = await fetch(`${server.baseUrl}/upload/encrypted/presign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ size: 1024 }),
+      });
+      expect(res.status).toBe(401);
+    });
+  });
 });

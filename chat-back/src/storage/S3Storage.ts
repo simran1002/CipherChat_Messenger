@@ -1,5 +1,12 @@
 import { DeleteObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { makeObjectName, type IFileStorage, type IncomingFile, type StoredFile } from "./interfaces.js";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import {
+  makeObjectName,
+  type IFileStorage,
+  type IncomingFile,
+  type PresignedUpload,
+  type StoredFile,
+} from "./interfaces.js";
 
 /**
  * S3-compatible object storage (AWS S3, MinIO, Cloudflare R2, …).
@@ -20,6 +27,18 @@ export interface S3StorageOptions {
 
 type S3Like = Pick<S3Client, "send">;
 
+/** Injectable so tests can fake the signature without AWS credentials. */
+type SignUrlFn = (
+  client: S3Like,
+  command: PutObjectCommand,
+  opts: { expiresIn: number }
+) => Promise<string>;
+
+const defaultSignUrl: SignUrlFn = (client, command, opts) =>
+  getSignedUrl(client as S3Client, command, opts);
+
+const PRESIGN_EXPIRES_SECONDS = 300;
+
 export class S3Storage implements IFileStorage {
   readonly driver = "s3" as const;
   private readonly prefix: string;
@@ -27,7 +46,8 @@ export class S3Storage implements IFileStorage {
 
   constructor(
     private readonly client: S3Like,
-    private readonly opts: S3StorageOptions
+    private readonly opts: S3StorageOptions,
+    private readonly signUrl: SignUrlFn = defaultSignUrl
   ) {
     this.prefix = (opts.prefix ?? "uploads").replace(/^\/+|\/+$/g, "");
     this.base = opts.publicBaseUrl.replace(/\/+$/, "");
@@ -59,6 +79,33 @@ export class S3Storage implements IFileStorage {
     await this.client
       .send(new DeleteObjectCommand({ Bucket: this.opts.bucket, Key: key }))
       .catch(() => {});
+  }
+
+  /**
+   * Direct-to-bucket upload: the server signs, the browser PUTs. ContentType
+   * and ContentLength are part of the signature — the bucket rejects a PUT
+   * whose type or size differs from what the app authorized, so the size cap
+   * enforced at the presign route can't be bypassed on the way to storage.
+   */
+  async presignPut(opts: { contentType: string; contentLength: number }): Promise<PresignedUpload> {
+    const key = `${this.prefix}/${makeObjectName("blob.bin")}`;
+    const command = new PutObjectCommand({
+      Bucket: this.opts.bucket,
+      Key: key,
+      ContentType: opts.contentType,
+      ContentLength: opts.contentLength,
+      CacheControl: "public, max-age=31536000, immutable",
+    });
+    const uploadUrl = await this.signUrl(this.client, command, {
+      expiresIn: PRESIGN_EXPIRES_SECONDS,
+    });
+    return {
+      uploadUrl,
+      headers: { "Content-Type": opts.contentType },
+      url: `${this.base}/${key}`,
+      key,
+      expiresSeconds: PRESIGN_EXPIRES_SECONDS,
+    };
   }
 
   keyFromUrl(url: string): string | null {

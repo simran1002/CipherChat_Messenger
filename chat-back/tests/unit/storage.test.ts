@@ -109,4 +109,36 @@ describe("S3Storage (fake client)", () => {
     await storage.delete("secrets/backup.json");
     expect(sent).toHaveLength(0);
   });
+
+  describe("presignPut (direct-to-bucket uploads)", () => {
+    it("signs a PUT that pins bucket, key, content type and length", async () => {
+      const signed: Array<{ input: Record<string, unknown>; expiresIn: number }> = [];
+      const withSigner = new S3Storage(
+        fakeClient as never,
+        { bucket: "cipherchat-media", publicBaseUrl: "https://cdn.example.com" },
+        async (_client, command, opts) => {
+          signed.push({ input: command.input as Record<string, unknown>, expiresIn: opts.expiresIn });
+          return `https://cipherchat-media.s3.example/${command.input.Key}?X-Amz-Signature=fake`;
+        }
+      );
+
+      const presigned = await withSigner.presignPut({
+        contentType: "application/octet-stream",
+        contentLength: 4096,
+      });
+
+      expect(signed).toHaveLength(1);
+      expect(signed[0].input.Bucket).toBe("cipherchat-media");
+      expect(signed[0].input.Key).toMatch(/^uploads\/\d+-\d+\.bin$/);
+      expect(signed[0].input.ContentType).toBe("application/octet-stream");
+      expect(signed[0].input.ContentLength).toBe(4096);
+      expect(signed[0].expiresIn).toBeGreaterThan(0);
+
+      expect(presigned.uploadUrl).toContain("X-Amz-Signature");
+      expect(presigned.headers["Content-Type"]).toBe("application/octet-stream");
+      // Durable URL points at the public base, not at the signed endpoint
+      expect(presigned.url).toBe(`https://cdn.example.com/${presigned.key}`);
+      expect(withSigner.keyFromUrl(presigned.url)).toBe(presigned.key);
+    });
+  });
 });

@@ -19,6 +19,7 @@ import E2EESetupGate from "../components/E2EESetupGate";
 import SafetyNumberModal from "../components/SafetyNumberModal";
 import DmAttachment from "../components/DmAttachment";
 import { encryptFileForDm } from "../crypto/fileCrypto";
+import { uploadEncryptedBlob } from "../services/encryptedUpload";
 import { parseDmContent, previewDmContent, serializeDmContent } from "../crypto/dmContent";
 import { getCurrentUserId } from "../hooks/useCurrentUser";
 import { stringToColor, getInitials, formatTime, formatDateDivider } from "../utils/helpers";
@@ -445,10 +446,9 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
     let serialized: string;
     try {
       const { blob, descriptor } = await encryptFileForDm(file);
-      const fd = new FormData();
-      fd.append("file", blob, "blob.bin"); // blob type is application/octet-stream
-      const res = await api.post("/upload/encrypted", fd);
-      const url = res.data.url as string;
+      // Presigned direct-to-bucket PUT when object storage is configured,
+      // proxied POST /upload/encrypted otherwise — decided server-side.
+      const url = await uploadEncryptedBlob(blob);
       serialized = serializeDmContent({ t: "file", file: { ...descriptor, url } });
     } catch {
       setPendingUpload(null);

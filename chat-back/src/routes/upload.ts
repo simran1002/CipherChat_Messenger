@@ -37,14 +37,16 @@ router.post(
 // server stores an opaque application/octet-stream blob and cannot learn what
 // it is — deliberately a separate route so the plaintext /upload keeps its
 // strict MIME allowlist for room attachments.
+// plaintext cap (10 MB) + GCM tag + slack
+const MAX_ENCRYPTED_BYTES = 10 * 1024 * 1024 + 64 * 1024;
+
 const encryptedUpload = multer({
   storage: multer.memoryStorage(),
   fileFilter: (_req, file, cb) => {
     if (file.mimetype === "application/octet-stream") cb(null, true);
     else cb(new HttpError(415, "unsupported_media_type", "Encrypted uploads must be application/octet-stream"));
   },
-  // plaintext cap (10 MB) + GCM tag + slack
-  limits: { fileSize: 10 * 1024 * 1024 + 64 * 1024 },
+  limits: { fileSize: MAX_ENCRYPTED_BYTES },
 });
 
 router.post(
@@ -65,6 +67,40 @@ router.post(
       bytes: stored.fileSize,
     });
     res.json({ url: stored.url, fileSize: stored.fileSize });
+  })
+);
+
+// POST /upload/encrypted/presign — direct-to-bucket variant. Returns a
+// short-lived PUT URL so the ciphertext never transits the app server
+// (object storage drivers only; local disk answers 501 and the client
+// falls back to the proxied POST /upload/encrypted above). The signature
+// pins content type AND length, so the size cap holds bucket-side too.
+router.post(
+  "/encrypted/presign",
+  auth,
+  catchErrors(async (req, res) => {
+    const size = Number((req.body as { size?: unknown })?.size);
+    if (!Number.isInteger(size) || size <= 0 || size > MAX_ENCRYPTED_BYTES) {
+      throw HttpError.badRequest("size must be a positive integer within the upload cap.", "invalid_size");
+    }
+    if (!fileStorage.presignPut) {
+      throw new HttpError(501, "presign_unsupported", "Direct uploads need object storage (STORAGE_DRIVER=s3).");
+    }
+    const presigned = await fileStorage.presignPut({
+      contentType: "application/octet-stream",
+      contentLength: size,
+    });
+    logger.info("Encrypted blob presigned", {
+      key: presigned.key,
+      user: req.payload!.id,
+      bytes: size,
+    });
+    res.json({
+      uploadUrl: presigned.uploadUrl,
+      headers: presigned.headers,
+      url: presigned.url,
+      expiresSeconds: presigned.expiresSeconds,
+    });
   })
 );
 

@@ -17,14 +17,18 @@ describe.skipIf(!REDIS_URL)("Redis reliability implementations", () => {
   let RedisSequenceCounter: typeof import("../../src/shared/redis/RedisSequenceCounter.js").RedisSequenceCounter;
   let RedisRateLimiter: typeof import("../../src/shared/redis/RedisRateLimiter.js").RedisRateLimiter;
   let RedisPresenceRegistry: typeof import("../../src/shared/redis/RedisPresenceRegistry.js").RedisPresenceRegistry;
+  let RedisTypingStateManager: typeof import("../../src/shared/redis/RedisTypingStateManager.js").RedisTypingStateManager;
+  let makeRedis: () => import("ioredis").Redis;
 
   beforeAll(async () => {
     const { Redis } = await import("ioredis");
-    redis = new Redis(REDIS_URL!);
+    makeRedis = () => new Redis(REDIS_URL!);
+    redis = makeRedis();
     ({ RedisDeduplicator } = await import("../../src/shared/redis/RedisDeduplicator.js"));
     ({ RedisSequenceCounter } = await import("../../src/shared/redis/RedisSequenceCounter.js"));
     ({ RedisRateLimiter } = await import("../../src/shared/redis/RedisRateLimiter.js"));
     ({ RedisPresenceRegistry } = await import("../../src/shared/redis/RedisPresenceRegistry.js"));
+    ({ RedisTypingStateManager } = await import("../../src/shared/redis/RedisTypingStateManager.js"));
   });
 
   afterAll(async () => {
@@ -128,6 +132,98 @@ describe.skipIf(!REDIS_URL)("Redis reliability implementations", () => {
       const listed = await reg.list();
       expect(listed.some((u) => u.userId === id)).toBe(false);
       expect(await redis.sismember("online_index", id)).toBe(0);
+    });
+  });
+
+  describe("RedisTypingStateManager (TTL keys + keyspace notifications)", () => {
+    // Redis's active-expiry cycle runs ~10×/s, so the expired event lands
+    // shortly AFTER the PX deadline — poll with a generous ceiling.
+    const waitFor = async (cond: () => boolean, ms = 5000): Promise<void> => {
+      const deadline = Date.now() + ms;
+      while (!cond() && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 25));
+      }
+    };
+    const managers: Array<InstanceType<typeof RedisTypingStateManager>> = [];
+    const make = (ttlMs: number) => {
+      const mgr = new RedisTypingStateManager(redis, makeRedis, ttlMs);
+      managers.push(mgr);
+      return mgr;
+    };
+
+    afterAll(async () => {
+      for (const mgr of managers.splice(0)) await mgr.dispose();
+    });
+
+    it("fires the expiry handler with pod-local scope after the TTL", async () => {
+      const mgr = make(300);
+      const calls: Array<[string, string, string]> = [];
+      mgr.onExpire((room, user, scope) => calls.push([room, user, scope]));
+
+      const room = `room-${randomUUID()}`;
+      await mgr.start(room, "alice", "Alice");
+      expect(await redis.exists(`typing:${room}:alice`)).toBe(1);
+
+      await waitFor(() => calls.length > 0);
+      expect(calls).toContainEqual([room, "alice", "pod-local"]);
+      expect(await redis.exists(`typing:${room}:alice`)).toBe(0);
+    });
+
+    it("every pod hears the expiry — a second manager sees a key it never started", async () => {
+      const podA = make(300);
+      const podB = make(300);
+      const heardByB: string[] = [];
+      podA.onExpire(() => {});
+      podB.onExpire((room) => heardByB.push(room));
+
+      const room = `room-${randomUUID()}`;
+      await podA.start(room, "alice", "Alice"); // started on pod A only
+
+      await waitFor(() => heardByB.includes(room));
+      expect(heardByB).toContain(room); // pod B can clear the ghost typer
+    });
+
+    it("stop() deletes the key without firing the handler", async () => {
+      const mgr = make(300);
+      const calls: string[] = [];
+      mgr.onExpire((room) => calls.push(room));
+
+      const room = `room-${randomUUID()}`;
+      await mgr.start(room, "alice", "Alice");
+      await mgr.stop(room, "alice");
+      expect(await redis.exists(`typing:${room}:alice`)).toBe(0);
+
+      await new Promise((r) => setTimeout(r, 800));
+      expect(calls).not.toContain(room);
+    });
+
+    it("clearUser() removes every room the user was typing in", async () => {
+      const mgr = make(60_000); // long TTL — only clearUser may remove these
+      mgr.onExpire(() => {});
+      const roomA = `room-${randomUUID()}`;
+      const roomB = `room-${randomUUID()}`;
+      await mgr.start(roomA, "bob", "Bob");
+      await mgr.start(roomB, "bob", "Bob");
+
+      await mgr.clearUser("bob");
+      expect(await redis.exists(`typing:${roomA}:bob`)).toBe(0);
+      expect(await redis.exists(`typing:${roomB}:bob`)).toBe(0);
+    });
+
+    it("repeated start() refreshes the TTL — no premature expiry", async () => {
+      const mgr = make(1500);
+      const calls: string[] = [];
+      mgr.onExpire((room) => calls.push(room));
+
+      const room = `room-${randomUUID()}`;
+      await mgr.start(room, "alice", "Alice");
+      await new Promise((r) => setTimeout(r, 900));
+      await mgr.start(room, "alice", "Alice"); // keystroke — reset TTL
+      await new Promise((r) => setTimeout(r, 900)); // 1800ms since first start, 900ms into new TTL
+      expect(calls).not.toContain(room);
+
+      await waitFor(() => calls.includes(room));
+      expect(calls.filter((r) => r === room)).toHaveLength(1);
     });
   });
 });

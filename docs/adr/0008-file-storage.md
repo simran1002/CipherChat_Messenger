@@ -36,10 +36,17 @@ replaced files.
 ## Rejected
 - **Presigned GET URLs** — message documents store URLs forever; presigned
   URLs expire (max 7 days). A public base URL/CDN is the durable form.
-- **Browser-direct presigned PUT uploads** — removes the server from the
-  upload path (good at scale) but loses the MIME allow-list and size cap as
-  a server-enforced boundary; the current volume doesn't justify it. Named
-  as the next step if upload throughput ever matters.
+
+## Follow-on adopted: browser-direct presigned PUT (encrypted blobs only)
+`POST /upload/encrypted/presign` returns a 5-minute PUT URL when the s3
+driver is active, and the ciphertext goes straight to the bucket without
+transiting the app server. The earlier objection — losing the server-enforced
+MIME/size boundary — doesn't apply here: the signature itself pins
+`Content-Type: application/octet-stream` and the exact byte length the app
+authorized, so the bucket rejects anything else. The plaintext room-upload
+route keeps its proxied path and MIME allow-list unchanged, and the client
+falls back to the proxied `POST /upload/encrypted` whenever presigning is
+unavailable (local driver answers 501, bucket CORS, expired URL).
 
 ## Trade-off
 - S3 mode needs bucket/CDN configuration and the default AWS credential

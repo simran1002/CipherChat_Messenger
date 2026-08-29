@@ -22,6 +22,17 @@ export interface StoredFile {
   fileSize: number;
 }
 
+export interface PresignedUpload {
+  /** Short-lived URL the browser PUTs the bytes to — directly at the bucket. */
+  uploadUrl: string;
+  /** Headers the client must send verbatim (they are part of the signature). */
+  headers: Record<string, string>;
+  /** Durable public URL to store in the message once the PUT succeeds. */
+  url: string;
+  key: string;
+  expiresSeconds: number;
+}
+
 export interface IFileStorage {
   readonly driver: "local" | "s3";
   put(file: IncomingFile): Promise<StoredFile>;
@@ -29,6 +40,13 @@ export interface IFileStorage {
   delete(key: string): Promise<void>;
   /** Map a URL this storage produced back to its key (null if foreign). */
   keyFromUrl(url: string): string | null;
+  /**
+   * Presign a direct-to-bucket PUT (optional capability — object storage
+   * only). Content type and length are baked into the signature, so the
+   * client can upload exactly the declared blob and nothing else, without
+   * the bytes ever transiting the app server.
+   */
+  presignPut?(opts: { contentType: string; contentLength: number }): Promise<PresignedUpload>;
 }
 
 /** Filesystem-safe, collision-resistant object name that keeps the extension. */

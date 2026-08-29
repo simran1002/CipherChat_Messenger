@@ -28,6 +28,7 @@
     "typecheck": "cd chat-back && npm run typecheck && cd ../chat-front && npm run typecheck",
     "demo:failover": "cd chat-back && npm run demo:failover",
     "stack": "docker compose up --build",
-    "stack:scale": "docker compose -f docker-compose.scale.yml up --build -d"
+    "stack:scale": "docker compose -f docker-compose.scale.yml up --build -d",
+    "stack:scale:ws": "docker compose -f docker-compose.scale.yml -f docker-compose.scale.leastconn.yml up --build -d"
   }
 }
