@@ -8,6 +8,7 @@ import {
   EyeIcon,
   EyeSlashIcon,
   ChatBubbleLeftRightIcon,
+  ShieldCheckIcon,
 } from "@heroicons/react/24/outline";
 import { makeToast } from "../utils/toast";
 import api from "../services/api";
@@ -17,15 +18,34 @@ interface LoginPageProps {
   setUser: (u: AuthUser) => void;
 }
 
+interface LoginSuccess {
+  message: string;
+  token: string;
+  user: AuthUser;
+}
+
 const LoginPage = ({ setUser }: LoginPageProps) => {
   const { setupSocket } = useSocket();
   const [formData, setFormData] = useState({ email: "", password: "" });
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  // 2FA second step: set when the password was right but the account
+  // requires a code. The pending token is NOT an access token.
+  const [pendingToken, setPendingToken] = useState<string | null>(null);
+  const [totpCode, setTotpCode] = useState("");
   const navigate = useNavigate();
 
   const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+
+  const finishLogin = (data: LoginSuccess) => {
+    makeToast("success", data.message);
+    localStorage.setItem("CC_Token", data.token);
+    localStorage.setItem("CC_User", JSON.stringify(data.user));
+    setUser(data.user);
+    setupSocket();
+    navigate("/dashboard");
   };
 
   const loginUser = async (e: FormEvent<HTMLFormElement>) => {
@@ -34,17 +54,39 @@ const LoginPage = ({ setUser }: LoginPageProps) => {
 
     try {
       const response = await api.post("/user/login", formData);
-      const data = response.data as { message: string; token: string; user: AuthUser };
-      makeToast("success", data.message);
-      localStorage.setItem("CC_Token", data.token);
-      localStorage.setItem("CC_User", JSON.stringify(data.user));
-      setUser(data.user);
-      setupSocket();
-      navigate("/dashboard");
+      const data = response.data as Partial<LoginSuccess> & {
+        requires2fa?: boolean;
+        pendingToken?: string;
+      };
+      if (data.requires2fa && data.pendingToken) {
+        setPendingToken(data.pendingToken);
+        return;
+      }
+      finishLogin(data as LoginSuccess);
     } catch (err) {
       const message = (err as { response?: { data?: { message?: string } } })?.response?.data
         ?.message;
       makeToast("error", message || "An error occurred. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const submitTwoFactor = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setIsLoading(true);
+    try {
+      const response = await api.post("/user/login/2fa", { pendingToken, code: totpCode });
+      finishLogin(response.data as LoginSuccess);
+    } catch (err) {
+      const resp = (err as { response?: { status?: number; data?: { message?: string; code?: string } } })
+        ?.response;
+      makeToast("error", resp?.data?.message || "That code didn't match.");
+      // The pending token lives 5 minutes — an expiry sends them back to step 1
+      if (resp?.data?.code === "2fa_pending_invalid") {
+        setPendingToken(null);
+        setTotpCode("");
+      }
     } finally {
       setIsLoading(false);
     }
@@ -82,6 +124,49 @@ const LoginPage = ({ setUser }: LoginPageProps) => {
           transition={{ delay: 0.3, duration: 0.5 }}
           className="bg-gray-800/50 backdrop-blur-xl rounded-2xl p-8 border border-gray-700/50 shadow-2xl"
         >
+          {pendingToken ? (
+            <form onSubmit={submitTwoFactor} className="space-y-6">
+              <div className="text-center">
+                <div className="w-12 h-12 bg-primary-500/15 rounded-xl flex items-center justify-center mx-auto mb-3">
+                  <ShieldCheckIcon className="w-6 h-6 text-primary-300" />
+                </div>
+                <h2 className="text-lg font-semibold text-white">Two-factor authentication</h2>
+                <p className="text-sm text-gray-400 mt-1">
+                  Enter the 6-digit code from your authenticator app, or one of your backup codes.
+                </p>
+              </div>
+              <input
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                autoFocus
+                value={totpCode}
+                onChange={(e) => setTotpCode(e.target.value)}
+                maxLength={9}
+                aria-label="Two-factor code"
+                placeholder="123456"
+                className="w-full bg-gray-700/50 border border-gray-600 text-white rounded-xl px-4 py-3 text-center text-xl tracking-[0.4em] font-mono focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent placeholder-gray-600 transition-all"
+                required
+              />
+              <button
+                type="submit"
+                disabled={isLoading || !totpCode.trim()}
+                className="w-full bg-gradient-to-r from-primary-500 to-secondary-500 hover:from-primary-600 hover:to-secondary-600 text-white font-semibold py-3 rounded-xl transition-all duration-200 shadow-lg shadow-primary-500/25 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isLoading ? "Verifying…" : "Verify"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingToken(null);
+                  setTotpCode("");
+                }}
+                className="w-full text-sm text-gray-400 hover:text-white transition-colors"
+              >
+                Back to password
+              </button>
+            </form>
+          ) : (
           <form onSubmit={loginUser} className="space-y-6">
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-gray-300 mb-2">
@@ -151,6 +236,7 @@ const LoginPage = ({ setUser }: LoginPageProps) => {
               )}
             </button>
           </form>
+          )}
 
           <div className="my-6">
             <div className="relative">

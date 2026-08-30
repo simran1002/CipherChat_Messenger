@@ -5,6 +5,7 @@ import { LockClosedIcon } from "@heroicons/react/24/solid";
 import api, { getApiUrl } from "../services/api";
 import { makeToast } from "../utils/toast";
 import { stringToColor, getInitials } from "../utils/helpers";
+import TwoFactorSettings from "../components/TwoFactorSettings";
 import type { AuthUser } from "../types";
 
 interface ProfilePageProps {
@@ -266,6 +267,7 @@ const ProfilePage = ({ setUser }: ProfilePageProps) => {
           )}
         </div>
       </motion.div>
+      {profile && <TwoFactorSettings initialEnabled={Boolean(profile.twoFactorEnabled)} />}
       <ActiveSessions />
     </div>
   );

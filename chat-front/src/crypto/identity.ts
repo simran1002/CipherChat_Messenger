@@ -17,7 +17,9 @@ import {
 } from "./primitives";
 import {
   allSessions,
+  loadBackupKeyMaterial,
   loadIdentity,
+  saveBackupKeyMaterial,
   saveIdentity,
   saveSession,
   type StoredIdentity,
@@ -113,15 +115,13 @@ interface BackupPayload {
   exportedAt: number;
 }
 
-/** Encrypt identity + sessions under the recovery code and upload the blob. */
-export async function uploadBackup(code: string): Promise<void> {
+/** Seal identity + all sessions under the given key material and PUT the blob. */
+async function encryptAndUpload(salt: Uint8Array, key: Uint8Array): Promise<void> {
   const identity = await loadIdentity();
   if (!identity) throw new Error("No identity to back up");
   const sessions = await allSessions();
 
-  const salt = randomBytes(16);
   const iv = randomBytes(12);
-  const key = await deriveBackupKey(code, salt);
   const payload: BackupPayload = { identity, sessions, exportedAt: Date.now() };
   const ct = aesGcmEncrypt(key, iv, utf8Encode(JSON.stringify(payload)));
 
@@ -130,6 +130,32 @@ export async function uploadBackup(code: string): Promise<void> {
   blob.set(iv, 16);
   blob.set(ct, 28);
   await api.put("/keys/backup/blob", { blob: toBase64(blob) });
+}
+
+/** Encrypt identity + sessions under the recovery code and upload the blob. */
+export async function uploadBackup(code: string): Promise<void> {
+  const salt = randomBytes(16);
+  const key = await deriveBackupKey(code, salt);
+  await encryptAndUpload(salt, key);
+  // Keep the DERIVED key (never the code) so refreshBackup() can re-seal
+  // later without prompting — the code itself is shown once and never stored.
+  await saveBackupKeyMaterial({ salt: toBase64(salt), key: toBase64(key) });
+}
+
+/**
+ * Re-upload the backup with the CURRENT session set, reusing the stored key
+ * material — the user's existing recovery code keeps working. Called whenever
+ * a session is created or rotated: sessions store chain key #0 (counters are
+ * derived, never advanced away), so capturing a session once at birth is
+ * enough to decrypt its entire lifetime after a restore. Without this, any
+ * conversation started after setup was unrecoverable on a new device.
+ * No-op (returns false) when no key material exists locally.
+ */
+export async function refreshBackup(): Promise<boolean> {
+  const material = await loadBackupKeyMaterial();
+  if (!material) return false;
+  await encryptAndUpload(fromBase64(material.salt), fromBase64(material.key));
+  return true;
 }
 
 /** Download + decrypt the backup; restores identity and session records. */
@@ -152,5 +178,8 @@ export async function restoreFromBackup(code: string): Promise<StoredIdentity> {
   for (const session of payload.sessions) {
     await saveSession(session);
   }
+  // The restored device becomes a full citizen: it must be able to keep the
+  // backup fresh as its own new sessions are established.
+  await saveBackupKeyMaterial({ salt: toBase64(salt), key: toBase64(key) });
   return payload.identity;
 }

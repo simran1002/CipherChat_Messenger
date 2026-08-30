@@ -37,7 +37,12 @@ function getClient(): Anthropic {
       );
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { Anthropic: AnthropicCtor } = require("@anthropic-ai/sdk") as typeof import("@anthropic-ai/sdk");
-    anthropic = new AnthropicCtor({ apiKey: env.ANTHROPIC_API_KEY });
+    anthropic = new AnthropicCtor({
+      apiKey: env.ANTHROPIC_API_KEY,
+      // Self-hosted deployments point this at an in-org gateway so room
+      // transcripts never leave their infrastructure (see env.ts).
+      ...(env.AI_BASE_URL ? { baseURL: env.AI_BASE_URL } : {}),
+    });
   }
   return anthropic;
 }

@@ -58,14 +58,14 @@ const guarantees = [
     icon: FingerPrintIcon,
     title: "Sessions you control",
     description:
-      "15-minute access tokens with rotating refresh cookies — replaying a rotated token is treated as theft and revoked. See every signed-in device and sign out everywhere else, remotely.",
+      "TOTP two-factor sign-in, 15-minute access tokens, rotating refresh cookies — replaying a rotated token is treated as theft and revoked. See every signed-in device and sign out everywhere else, remotely.",
     color: "from-indigo-500 to-violet-500",
   },
 ];
 
 const stats = [
   { value: "176 ms", label: "ACK p95 under load" },
-  { value: "266", label: "automated tests" },
+  { value: "280", label: "automated tests" },
   { value: "60/60", label: "messages survive a pod kill" },
   { value: "AES-256", label: "GCM, RFC-vectored" },
 ];
@@ -234,7 +234,7 @@ const IndexPage = () => {
               <span className="text-lg font-bold text-white">CipherChat</span>
             </div>
             <p className="text-gray-500 text-sm">
-              TypeScript · React · Socket.IO · MongoDB · Redis — 266 automated
+              TypeScript · React · Socket.IO · MongoDB · Redis — 280 automated
               tests, RFC-vectored crypto, kill-a-pod verified
             </p>
             <p className="text-gray-600 text-xs mt-3">

@@ -14,7 +14,10 @@ const VERIFY_OPTIONS: jwt.VerifyOptions = {
 /** Verify a raw JWT string and return its payload. Shared by HTTP and socket auth. */
 export function verifyToken(token: string): AuthPayload {
   const decoded = jwt.verify(token, env.SECRET, VERIFY_OPTIONS) as jwt.JwtPayload | string;
-  if (typeof decoded === "string" || typeof decoded.id !== "string") {
+  // Scoped tokens (e.g. the 5-minute 2FA-pending token issued after a correct
+  // password but BEFORE the second factor) must never work as access tokens —
+  // an access token is exactly {id} with no scope claim.
+  if (typeof decoded === "string" || typeof decoded.id !== "string" || decoded.scope !== undefined) {
     throw new jwt.JsonWebTokenError("Malformed token payload");
   }
   return { id: decoded.id };
@@ -25,6 +28,29 @@ export const ACCESS_TOKEN_TTL = "15m";
 
 export function signToken(payload: AuthPayload): string {
   return jwt.sign(payload, env.SECRET, { algorithm: "HS256", expiresIn: ACCESS_TOKEN_TTL });
+}
+
+// ── 2FA pending tokens ────────────────────────────────────────────────────
+// Proof that the password step succeeded, worth nothing anywhere else:
+// verifyToken above rejects any token carrying a scope claim.
+
+const TWO_FACTOR_SCOPE = "2fa-pending";
+export const TWO_FACTOR_PENDING_TTL = "5m";
+
+export function sign2faPendingToken(userId: string): string {
+  return jwt.sign({ id: userId, scope: TWO_FACTOR_SCOPE }, env.SECRET, {
+    algorithm: "HS256",
+    expiresIn: TWO_FACTOR_PENDING_TTL,
+  });
+}
+
+/** Returns the userId, or throws (invalid, expired, or not a pending token). */
+export function verify2faPendingToken(token: string): string {
+  const decoded = jwt.verify(token, env.SECRET, VERIFY_OPTIONS) as jwt.JwtPayload | string;
+  if (typeof decoded === "string" || typeof decoded.id !== "string" || decoded.scope !== TWO_FACTOR_SCOPE) {
+    throw new jwt.JsonWebTokenError("Not a 2FA pending token");
+  }
+  return decoded.id;
 }
 
 export function auth(req: Request, res: Response, next: NextFunction): void {

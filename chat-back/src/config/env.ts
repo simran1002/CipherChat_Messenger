@@ -10,6 +10,13 @@ const envSchema = z.object({
   ENV: z.string().default("production"),
   LOG_LEVEL: z.enum(["error", "warn", "info", "debug"]).default("info"),
   ANTHROPIC_API_KEY: z.string().optional(),
+  /**
+   * Anthropic-compatible endpoint for AI features. Point it at a self-hosted
+   * gateway (LiteLLM, vLLM behind an adapter, a corporate proxy) so room
+   * transcripts never leave the org's infrastructure — the deployment answer
+   * to "AI needs plaintext" for the target customer. Omit for api.anthropic.com.
+   */
+  AI_BASE_URL: z.string().optional(),
   FRONTEND_URL: z.string().optional(),
   REDIS_URL: z.string().optional(),
   // File storage: "local" (uploads/ on disk) or "s3" (S3-compatible bucket).

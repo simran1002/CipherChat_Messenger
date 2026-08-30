@@ -79,6 +79,20 @@ const refreshLimiter = rateLimit({
 });
 app.use("/user/refresh", refreshLimiter);
 
+// 2FA code entry: a TOTP code is 6 digits — without a tight bucket, the
+// 100-per-window /user limiter would hand an attacker with a stolen password
+// 100 guesses per window. 10 per 5 minutes makes online brute force absurd
+// (the pending token itself dies after 5 minutes anyway).
+const twoFactorLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: limiterStore("2fa"),
+  message: { message: "Too many code attempts — wait a few minutes and try again." },
+});
+app.use("/user/login/2fa", twoFactorLimiter);
+
 const uploadLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 30,

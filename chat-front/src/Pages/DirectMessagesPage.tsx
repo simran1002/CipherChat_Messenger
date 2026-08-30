@@ -107,6 +107,10 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
   const [showSafetyModal, setShowSafetyModal] = useState(false);
   /** File name currently being encrypted & uploaded (composer pending strip). */
   const [pendingUpload, setPendingUpload] = useState<string | null>(null);
+  // Local search over DECRYPTED messages. The server can't provide this —
+  // it only ever holds ciphertext — so search runs entirely on this device.
+  const [showDmSearch, setShowDmSearch] = useState(false);
+  const [dmSearch, setDmSearch] = useState("");
 
   const { status: e2eeStatus, refresh: refreshE2EE } = useE2EE();
 
@@ -169,6 +173,8 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
   const openConversation = async (conv: ConversationLike) => {
     setActiveConv(conv);
     setMessages([]);
+    setShowDmSearch(false);
+    setDmSearch("");
     setIsLoadingMsgs(true);
     try {
       const res = await api.get(`/dm/${conv._id}/messages`);
@@ -542,6 +548,18 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
 
   const e2eeReady = e2eeStatus.state === "ready";
   const allE2EE = messages.length > 0 && messages.every((m) => m.encrypted);
+
+  // Searchable text of a message as THIS device sees it (decrypted): body
+  // text, or the real file name that travelled inside the envelope.
+  const searchableText = (msg: DmMessage): string => {
+    const content = parseDmContent(msg.message);
+    return content.t === "file" ? content.file.name : content.text;
+  };
+  const dmQuery = dmSearch.trim().toLowerCase();
+  const isSearching = showDmSearch && dmQuery.length > 0;
+  const visibleMessages = isSearching
+    ? messages.filter((m) => searchableText(m).toLowerCase().includes(dmQuery))
+    : messages;
   const keyChangedActive = !!activeConv && keyChangedConvs.has(activeConv._id);
 
   const dmUi = (
@@ -618,17 +636,63 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
               </div>
               <p className="text-xs text-gray-500 truncate">{activeConv.participant?.email}</p>
             </div>
-            {e2eeReady && activeConv.participant && (
+            <div className="ml-auto flex items-center gap-1">
               <button
-                onClick={() => setShowSafetyModal(true)}
-                className="ml-auto p-2 hover:bg-gray-700 rounded-lg transition-colors"
-                aria-label="View safety number"
-                title="View safety number"
+                onClick={() => {
+                  setShowDmSearch((v) => {
+                    if (v) setDmSearch("");
+                    return !v;
+                  });
+                }}
+                className={`p-2 hover:bg-gray-700 rounded-lg transition-colors ${showDmSearch ? "bg-gray-700" : ""}`}
+                aria-label="Search this conversation"
+                title="Search this conversation (on-device — the server only stores ciphertext)"
               >
-                <ShieldCheckIcon className="w-5 h-5 text-gray-400" />
+                <MagnifyingGlassIcon className="w-5 h-5 text-gray-400" />
               </button>
-            )}
+              {e2eeReady && activeConv.participant && (
+                <button
+                  onClick={() => setShowSafetyModal(true)}
+                  className="p-2 hover:bg-gray-700 rounded-lg transition-colors"
+                  aria-label="View safety number"
+                  title="View safety number"
+                >
+                  <ShieldCheckIcon className="w-5 h-5 text-gray-400" />
+                </button>
+              )}
+            </div>
           </div>
+
+          {/* On-device search: filters the DECRYPTED messages held in memory */}
+          {showDmSearch && (
+            <div className="bg-gray-800/60 border-b border-gray-700/50 px-4 py-2 shrink-0">
+              <div className="relative">
+                <MagnifyingGlassIcon className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  autoFocus
+                  type="text"
+                  value={dmSearch}
+                  onChange={(e) => setDmSearch(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      setShowDmSearch(false);
+                      setDmSearch("");
+                    }
+                  }}
+                  placeholder="Search decrypted messages on this device…"
+                  aria-label="Search this conversation"
+                  className="w-full bg-gray-900/70 border border-gray-700 focus:border-primary-500 rounded-lg pl-9 pr-3 py-1.5 text-sm text-gray-200 outline-none"
+                />
+              </div>
+              {isSearching && (
+                <p className="text-[11px] text-gray-500 mt-1.5">
+                  {visibleMessages.length} match{visibleMessages.length === 1 ? "" : "es"} in{" "}
+                  {messages.length} decrypted messages — searched locally, the server only ever
+                  sees ciphertext
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Messages */}
           <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-1">
@@ -652,14 +716,23 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
                     </p>
                   </div>
                 )}
-                {messages.map((msg, index) => {
+                {isSearching && visibleMessages.length === 0 && (
+                  <div className="flex items-center justify-center h-full text-center">
+                    <p className="text-gray-500 text-sm">
+                      No matches for &ldquo;{dmSearch.trim()}&rdquo; in this conversation
+                    </p>
+                  </div>
+                )}
+                {visibleMessages.map((msg, index) => {
                   const isMine = msg.userId === currentUserId;
                   const content = parseDmContent(msg.message);
+                  // Dividers reason about ADJACENT history — meaningless over
+                  // a filtered result list, so hide them while searching.
                   const showE2EEDivider =
-                    index > 0 && !messages[index - 1].encrypted && !!msg.encrypted;
+                    !isSearching && index > 0 && !messages[index - 1].encrypted && !!msg.encrypted;
                   return (
                     <React.Fragment key={msg._id || index}>
-                      {shouldShowDateDivider(index) && (
+                      {!isSearching && shouldShowDateDivider(index) && (
                         <div className="flex items-center justify-center my-4">
                           <div className="bg-gray-800 text-gray-400 text-xs px-3 py-1 rounded-full border border-gray-700">
                             {formatDateDivider(msg.createdAt)}
@@ -692,7 +765,7 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
                     </React.Fragment>
                   );
                 })}
-                {typingUsers.length > 0 && (
+                {!isSearching && typingUsers.length > 0 && (
                   <div className="flex items-center gap-2 text-xs text-gray-500 pl-2">
                     <div className="flex space-x-1">
                       {[0, 0.15, 0.3].map((d, i) => (

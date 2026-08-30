@@ -128,9 +128,11 @@ probing, and an honest account of what impresses vs. what can be attacked.
   ADR-0005; full fix conflicts with the socket handshake.
 - **Metadata visible to the server** — inherent to routing; padding buckets
   blunt size analysis only.
-- **AI features send room plaintext to a third-party API** — off by default
-  (no key configured, 503s gracefully); a self-hosted-LLM swap is the
-  documented alternative for the target customer.
+- **AI features send room plaintext to an external API** — off by default
+  (no key configured, 503s gracefully), and `AI_BASE_URL` points the client
+  at any Anthropic-compatible in-org gateway (LiteLLM, corporate proxy), so
+  the self-hosted deployment story extends to AI: transcripts need never
+  leave the org's infrastructure.
 
 **Measured, with the caveats stated up front (from the k6 + failover runs):**
 - **Hot-room fan-out is the real ceiling**: 50 users all typing in one room
@@ -214,6 +216,35 @@ probing, and an honest account of what impresses vs. what can be attacked.
   reloads served the backend's Prometheus text instead of the dashboard page
   (the dashboard's data comes from `/analytics`; the prefix never belonged
   in the proxy list).
+- ~~A stolen password was the whole ballgame~~ → **TOTP 2FA** (ADR-0009):
+  QR enrollment confirmed with a live code, 8 single-use bcrypt-hashed
+  backup codes, AES-sealed seeds, a dedicated 10-per-5-min limiter on code
+  entry, and a two-step login built on a scoped pending token. The detail
+  to lead with: the access-token verifier rejects **any** JWT carrying a
+  scope claim, so the password-step token is structurally incapable of
+  authenticating a request — no allowlist to forget, no flag to check.
+  Verified three ways: 6 integration tests (including "pending token on
+  /user/profile → 401" and "backup code works exactly once"), 8 component
+  tests, and a scripted live run enrolling via the real UI and signing in
+  from a second browser with a generated code.
+- **The live verification caught a real E2EE flaw** (best story of the
+  pass): the recovery backup was uploaded exactly once, at setup — before
+  any session existed — so every conversation started later was
+  unrecoverable on a new device, while the UI promised otherwise. Fix: the
+  PBKDF2-derived backup key (never the human code) is kept in the wrapped
+  key store, and the blob is re-uploaded whenever a session is created or
+  rotated. That's *sufficient*, not just convenient: sessions store chain
+  key #0 and derive per-counter keys forward, so capturing a session once
+  at birth decrypts its entire lifetime. Proof: a fresh browser restored
+  from the code and searched an E2EE conversation — "2 matches in 5
+  decrypted messages". The lesson: unit tests exercised backup round-trips
+  and still missed it; only an end-to-end "new device" walk found the gap
+  between what was backed up and *when*.
+- otplib v13's CJS entry crashes a compiled CommonJS server at boot (it
+  requires an ESM-only dependency) — caught because the verification runs
+  the REAL runtime, fixed with a tsc-preserved dynamic `import()`. Vitest
+  and tsx both masked it; "the tests pass" and "the build boots" are
+  different claims.
 
 **Performance-engineering pass (measured A/B, same harness):**
 - The message send path performed **4–5 MongoDB round-trips per message**
@@ -241,9 +272,11 @@ probing, and an honest account of what impresses vs. what can be attacked.
   long-cacheable vendor chunks (first-load gzip ≈ −38%).
 
 **Known gaps an interviewer could press (be ready, or fix next):**
-- **E2EE DMs are client-side-search-only** by definition (the server holds
-  ciphertext); room search uses the `$text` index. Worth stating as a
-  feature of the threat model, not a gap.
+- ~~E2EE DMs were unsearchable~~ → **on-device search shipped**: it filters
+  the decrypted messages (and attachment filenames, which only exist inside
+  envelopes) in the browser, with the honest caption "searched locally — the
+  server only ever sees ciphertext". Room search stays server-side on the
+  `$text` index. The two search paths ARE the threat model, drawn in UI.
 - **`/user/refresh` shares the generic `/user` rate bucket** (100/15 min) —
   adequate, but a dedicated tighter bucket would blunt token-guessing noise
   further. One-line change; not done only to keep the auth ADR stable.

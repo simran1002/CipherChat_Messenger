@@ -69,6 +69,25 @@ const userSchema = new Schema(
     // Opaque client-encrypted backup blob (identity + sessions wrapped under
     // the recovery code). The server stores it, cannot read it.
     keyBackup: { type: String, default: undefined, select: false, maxlength: 131072 },
+
+    // ── Two-factor authentication (TOTP) ────────────────────────────────────
+    // secret is the base32 TOTP seed sealed with AES-256-GCM (utils/secretBox)
+    // so a DB dump alone can't mint codes; backupCodes are bcrypt hashes,
+    // removed as they're consumed (single-use). enabled=false means setup was
+    // started but never confirmed with a live code.
+    twoFactor: {
+      type: new Schema(
+        {
+          enabled: { type: Boolean, required: true, default: false },
+          secret: { type: String, required: true },
+          backupCodes: { type: [String], default: [] },
+          enabledAt: { type: Date, default: undefined },
+        },
+        { _id: false }
+      ),
+      default: undefined,
+      select: false,
+    },
   },
   { timestamps: true }
 );

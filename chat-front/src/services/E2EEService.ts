@@ -17,7 +17,13 @@ import {
 } from "../crypto/session";
 import { open, openOwn, seal, type WireEnvelope } from "../crypto/envelope";
 import { computeSafetyNumber, formatSafetyNumber } from "../crypto/safetyNumber";
-import { createAndPublishIdentity, generateRecoveryCode, restoreFromBackup, uploadBackup } from "../crypto/identity";
+import {
+  createAndPublishIdentity,
+  generateRecoveryCode,
+  refreshBackup,
+  restoreFromBackup,
+  uploadBackup,
+} from "../crypto/identity";
 import type { StoredIdentity, StoredSession } from "../crypto/keyStore";
 
 export type E2EEStatus =
@@ -131,6 +137,10 @@ class E2EEService {
       const ctr = session.sendCtr;
       session.sendCtr = ctr + 1;
       await keyStore.saveSession(session); // counter burned before ciphertext exists
+      // New session → fold it into the server-side backup so a future restore
+      // can decrypt this conversation. After saveSession so the refresh sees
+      // it; fire-and-forget — the next session event retries on failure.
+      if (init !== undefined) void refreshBackup().catch(() => {});
 
       // init must ride along until the peer has surely seen it: attach on
       // every message of the first ratchet turn (ctr 0). Later counters omit it.
@@ -161,6 +171,7 @@ class E2EEService {
         keyChanged = await this.checkPeerIdentity(senderId, envelope.init.ik);
         session = acceptSession(conversationId, senderId, envelope.sessionId, identity, envelope.init);
         await keyStore.saveSession(session);
+        void refreshBackup().catch(() => {});
       }
       if (!session) return { ok: false, text: UNDECRYPTABLE };
 

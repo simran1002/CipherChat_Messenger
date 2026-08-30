@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import { User } from "../models/User.js";
 import { HttpError } from "../errors/HttpError.js";
-import { signToken } from "../middlewares/auth.js";
+import { signToken, sign2faPendingToken } from "../middlewares/auth.js";
 import {
   issueRefreshToken,
   listSessions,
@@ -52,11 +52,19 @@ export async function login(req: Request, res: Response): Promise<void> {
   if (!email || !password) throw HttpError.badRequest("Email and password are required.");
 
   // password is select:false on the schema now — opt in explicitly
-  const user = await User.findOne({ email: email.toLowerCase() }).select("+password");
+  const user = await User.findOne({ email: email.toLowerCase() }).select("+password +twoFactor");
   if (!user) throw HttpError.unauthorized("Email and password did not match.", "bad_credentials");
 
   const isMatch = await bcrypt.compare(password, user.password);
   if (!isMatch) throw HttpError.unauthorized("Email and password did not match.", "bad_credentials");
+
+  // 2FA: the password alone gets a 5-minute pending token, not a session.
+  // No refresh cookie, no isOnline — nothing about the account changes until
+  // /user/login/2fa presents a matching code.
+  if (user.twoFactor?.enabled) {
+    res.json({ requires2fa: true, pendingToken: sign2faPendingToken(user.id) });
+    return;
+  }
 
   const token = signToken({ id: user.id });
   await issueRefreshToken(res, user.id, req.ip);
@@ -111,9 +119,11 @@ export async function revokeOthers(req: Request, res: Response): Promise<void> {
 }
 
 export async function getProfile(req: Request, res: Response): Promise<void> {
-  const user = await User.findById(req.payload!.id);
+  const user = await User.findById(req.payload!.id).select("+twoFactor");
   if (!user) throw HttpError.notFound("User not found.");
-  res.json(user);
+  // Expose only the boolean — never the (sealed) seed or backup-code hashes
+  const { twoFactor, ...profile } = user.toObject();
+  res.json({ ...profile, twoFactorEnabled: Boolean(twoFactor?.enabled) });
 }
 
 export async function updateProfile(req: Request, res: Response): Promise<void> {

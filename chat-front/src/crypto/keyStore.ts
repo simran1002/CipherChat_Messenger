@@ -96,6 +96,30 @@ export async function unwrapJson<T>(wrapped: string): Promise<T> {
   return JSON.parse(utf8Decode(pt)) as T;
 }
 
+// ── Backup wrapping-key material ─────────────────────────────────────────────
+// The PBKDF2-derived backup key (NOT the human recovery code) is kept locally
+// so the backup blob can be re-uploaded when sessions change without asking
+// the user to re-type their code. Stored wrapped like everything else; its
+// security is equivalent to the sessions it protects, which live in the same
+// database.
+
+export interface BackupKeyMaterial {
+  salt: string; // b64 — reused so old blobs stay decryptable by the same code
+  key: string; // b64 raw AES-256 key bytes
+}
+
+export async function saveBackupKeyMaterial(material: BackupKeyMaterial): Promise<void> {
+  const wrapped = await wrapJson(material);
+  await tx("meta", "readwrite", (s) => s.put({ id: "backupKey", wrapped }));
+}
+
+export async function loadBackupKeyMaterial(): Promise<BackupKeyMaterial | null> {
+  const row = await tx<{ id: string; wrapped: string } | undefined>("meta", "readonly", (s) =>
+    s.get("backupKey")
+  );
+  return row ? unwrapJson<BackupKeyMaterial>(row.wrapped) : null;
+}
+
 // ── Identity ─────────────────────────────────────────────────────────────────
 
 export interface StoredIdentity {

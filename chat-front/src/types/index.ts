@@ -7,6 +7,8 @@ export interface AuthUser {
   email: string;
   dp?: string;
   bio?: string;
+  /** Present on /user/profile responses only. */
+  twoFactorEnabled?: boolean;
 }
 
 /** Client-side delivery state for a message bubble's tick indicator. */
