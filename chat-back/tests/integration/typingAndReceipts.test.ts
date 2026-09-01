@@ -63,8 +63,8 @@ describe("typing indicators and receipts (socket integration)", () => {
     const rosterReady = (sock: ClientSocket, a: string, b: string) =>
       new Promise<void>((resolve) => {
         const deadline = setTimeout(resolve, 10_000); // never hang the test on this
-        sock.on("onlineUsers", (roster: Array<{ userId: string }>) => {
-          if (bothOnline(roster, a, b)) {
+        sock.on("onlineUsers", (roster: { total: number; users: Array<{ userId: string }> }) => {
+          if (bothOnline(roster.users, a, b)) {
             clearTimeout(deadline);
             resolve();
           }

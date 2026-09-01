@@ -111,6 +111,8 @@ const ChatroomPage = ({ user }: ChatroomPageProps) => {
   const [chatroomName, setChatroomName] = useState("Loading…");
   const [typingUsers, setTypingUsers] = useState<TypingUser[]>([]);
   const [onlineUsers, setOnlineUsers] = useState<OnlineUserPublic[]>([]);
+  // Real headcount — the users list is capped server-side (bounded roster)
+  const [onlineTotal, setOnlineTotal] = useState(0);
   const [isLoadingMessages, setIsLoadingMessages] = useState(true);
   const [isConnected, setIsConnected] = useState(true);
 
@@ -455,12 +457,17 @@ const ChatroomPage = ({ user }: ChatroomPageProps) => {
       loadPinned();
     };
 
+    const handleRoster = ({ total, users }: { total: number; users: OnlineUserPublic[] }) => {
+      setOnlineUsers(users);
+      setOnlineTotal(total);
+    };
+
     socket.on("newMessage", handleNewMessage);
     socket.on("messageDeliveryUpdate", handleDeliveryUpdate);
     socket.on("messagesRead", handleMessagesRead);
     socket.on("userTyping", handleUserTyping);
     socket.on("userStopTyping", handleStopTyping);
-    socket.on("onlineUsers", setOnlineUsers);
+    socket.on("onlineUsers", handleRoster);
     socket.on("messageEdited", handleEdited);
     socket.on("messageDeleted", handleDeleted);
     socket.on("reactionUpdated", handleReactionUpdated);
@@ -472,7 +479,7 @@ const ChatroomPage = ({ user }: ChatroomPageProps) => {
       socket.off("messagesRead", handleMessagesRead);
       socket.off("userTyping", handleUserTyping);
       socket.off("userStopTyping", handleStopTyping);
-      socket.off("onlineUsers", setOnlineUsers);
+      socket.off("onlineUsers", handleRoster);
       socket.off("messageEdited", handleEdited);
       socket.off("messageDeleted", handleDeleted);
       socket.off("reactionUpdated", handleReactionUpdated);
@@ -626,7 +633,7 @@ const ChatroomPage = ({ user }: ChatroomPageProps) => {
       <aside
         className={`${showSidebar ? "translate-x-0" : "-translate-x-full md:translate-x-0"} fixed md:relative z-30 w-64 h-full border-r border-gray-700/50 flex flex-col transition-transform duration-300 bg-gray-900/80 backdrop-blur-sm`}
       >
-        <OnlineUsersSidebar onlineUsers={onlineUsers} currentUserId={userId} />
+        <OnlineUsersSidebar onlineUsers={onlineUsers} onlineTotal={onlineTotal} currentUserId={userId} />
       </aside>
 
       {showSidebar && (
@@ -648,7 +655,7 @@ const ChatroomPage = ({ user }: ChatroomPageProps) => {
                 {chatroomName}
               </h1>
               <p className="text-xs text-gray-500">
-                {onlineUsers.length} online · exactly-once delivery
+                {onlineTotal} online · exactly-once delivery
                 {pendingCount > 0 && (
                   <span className="text-yellow-400 ml-2">· {pendingCount} sending…</span>
                 )}

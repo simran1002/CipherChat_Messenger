@@ -11,7 +11,7 @@ conversations in a third-party SaaS — legal clinics, healthcare practices, new
 
 ![CI](https://github.com/simran1002/CipherChat_Messenger/actions/workflows/ci.yml/badge.svg)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6)
-![Tests](https://img.shields.io/badge/tests-280-brightgreen)
+![Tests](https://img.shields.io/badge/tests-285-brightgreen)
 ![E2EE](https://img.shields.io/badge/E2EE-AES--256--GCM%20%2B%20X3DH-8b5cf6)
 ![Scale](https://img.shields.io/badge/scale--out-Redis%20%2B%20nginx-dc382d)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -162,6 +162,7 @@ Same-harness A/B and load numbers (methodology + caveats in [WHY-DIFFERENT](docs
 
 | Measurement | Result |
 |---|---|
+| Connection density (`scripts/connflood.mts`): ramp + hold + probe on ONE pod | **10,000/10,000 concurrent sockets, zero failures**; 470 MB RSS (~47 KB/socket); message probe through the held load ACKed 200/200 at **p50 43 ms / p95 95 ms** |
 | k6, 50 VUs across 10 rooms (~59 msg/s, 5× fan-out) via the LB | **ACK p95 176 ms** (p50 19 ms), 100% checks — threshold met |
 | k6, 50 VUs in one hot room (50× fan-out ≈ 2,900 deliveries/s) | p95 2.55 s — the honest stress ceiling, with the fan-out math documented |
 | Hot-path optimization A/B (`scripts/loadgen.mts`, identical harness) | send path 4–5 Mongo round-trips → 1: ACK p50 **284 → ~100 ms**, p95 **489 → ~195 ms** |
@@ -223,10 +224,10 @@ strips the Origin header, so no CORS config is ever needed in dev. Without `REDI
 backend runs single-node on in-memory implementations of the same interfaces
 ([ADR-0002](docs/adr/0002-redis-behind-interfaces.md)).
 
-## Tests & CI — 280 automated tests
+## Tests & CI — 285 automated tests
 
 ```bash
-cd chat-back  && npm test               # 127 unit + socket integration (mongodb-memory-server)
+cd chat-back  && npm test               # 132 unit + socket integration (mongodb-memory-server)
 cd chat-front && npm test               # 153: components, hooks, offline queue, crypto KATs
 k6 run load/k6-chat.js                  # threshold p95 ACK < 250ms (measured 176ms @ 10 rooms)
 cd chat-back && npm run demo:failover   # the kill-a-pod assertion

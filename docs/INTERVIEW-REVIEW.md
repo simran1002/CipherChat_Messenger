@@ -245,6 +245,31 @@ probing, and an honest account of what impresses vs. what can be attacked.
   the REAL runtime, fixed with a tsc-preserved dynamic `import()`. Vitest
   and tsx both masked it; "the tests pass" and "the build boots" are
   different claims.
+- **The 10k connection-density benchmark** (`scripts/connflood.mts`) — built
+  to replace the "≤500 sockets/pod" assumption with a measurement, it found
+  three distinct bottlenecks before producing a clean number, and only ONE
+  was in the server:
+  1. *Server:* the presence roster was re-broadcast unbounded to every
+     socket on every connect/disconnect — O(N³) wire traffic during a ramp.
+     Fixed: roster payload bounded to `{total, users: first 100}` and
+     broadcasts throttled through `RosterBroadcaster` (leading edge +
+     trailing coalescing; its own unit tests then caught a same-tick burst
+     race in the first implementation — the async send resolved after the
+     guard check, so 500 synchronous requests meant 500 sends).
+  2. *Harness:* a single-process load generator starves its own event loop
+     past ~5k sockets, misses server pings, and the server's ping timeout
+     correctly reaps "healthy" connections — the first run measured the
+     load generator. Sharded across 4 worker processes.
+  3. *Infrastructure:* free-tier Atlas throttles around 100 ops/s; 10k
+     per-connect bookkeeping writes melted it (`read ECONNRESET`). The
+     bench runs on a RAM-backed local mongod, and mass-disconnect DB writes
+     became fire-and-forget so a dying pod's 10k sockets never queue behind
+     per-user round-trips.
+  Final: **10,000/10,000 held on one pod, zero failures, 470 MB RSS, and a
+  delivery probe through the held load ACKing 200/200 at p95 95 ms.** The
+  interview sentence: "knowing which of the three layers is actually
+  failing — server, harness, or infrastructure — IS the benchmark skill;
+  the first two runs measured the wrong layer, and the numbers said so."
 
 **Performance-engineering pass (measured A/B, same harness):**
 - The message send path performed **4–5 MongoDB round-trips per message**

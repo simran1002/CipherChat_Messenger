@@ -145,8 +145,19 @@ export interface ClientToServerEvents {
   syncOfflineQueue: (p: { messages: OfflineQueueItem[] }) => void;
 }
 
+/**
+ * Bounded roster: `users` is capped (first ROSTER_CAP entries) so the payload
+ * stays O(1) as the org grows; `total` carries the real headcount. An
+ * unbounded roster broadcast to an unbounded audience was the first thing the
+ * 10k-connection benchmark broke.
+ */
+export interface RosterPayload {
+  total: number;
+  users: OnlineUserPublic[];
+}
+
 export interface ServerToClientEvents {
-  onlineUsers: (users: OnlineUserPublic[]) => void;
+  onlineUsers: (roster: RosterPayload) => void;
   heartbeatAck: (p: { ts: number }) => void;
   userJoined: (p: { userId: string; name: string }) => void;
   newMessage: (p: NewMessagePayload) => void;

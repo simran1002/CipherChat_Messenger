@@ -21,17 +21,21 @@ const Avatar = ({ user }: { user: OnlineUserPublic | null | undefined }) => {
 
 interface OnlineUsersSidebarProps {
   onlineUsers: OnlineUserPublic[];
+  /** Real headcount — the list itself is capped server-side (bounded roster). */
+  onlineTotal?: number;
   currentUserId?: string | null;
   currentPresence?: Partial<PresenceUpdate> | null;
   socket?: AppSocket | null;
   onPresenceUpdate?: (update: PresenceUpdate) => void;
 }
 
-const OnlineUsersSidebar = ({ onlineUsers, currentUserId, currentPresence, socket, onPresenceUpdate }: OnlineUsersSidebarProps) => (
+const OnlineUsersSidebar = ({ onlineUsers, onlineTotal, currentUserId, currentPresence, socket, onPresenceUpdate }: OnlineUsersSidebarProps) => {
+  const total = onlineTotal ?? onlineUsers.length;
+  return (
   <aside className="w-full h-full bg-gray-900/90 backdrop-blur-sm flex flex-col">
     <div className="flex items-center gap-2 p-4 border-b border-gray-700/50 shrink-0">
       <UsersIcon className="w-4 h-4 text-violet-400" />
-      <span className="font-semibold text-white text-sm">Online ({onlineUsers.length})</span>
+      <span className="font-semibold text-white text-sm">Online ({total})</span>
     </div>
 
     <div className="flex-1 overflow-y-auto">
@@ -81,8 +85,14 @@ const OnlineUsersSidebar = ({ onlineUsers, currentUserId, currentPresence, socke
           );
         })
       )}
+      {total > onlineUsers.length && (
+        <p className="text-xs text-gray-500 px-4 py-3 text-center">
+          + {total - onlineUsers.length} more online
+        </p>
+      )}
     </div>
   </aside>
-);
+  );
+};
 
 export default OnlineUsersSidebar;

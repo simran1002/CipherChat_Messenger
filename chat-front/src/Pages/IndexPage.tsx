@@ -64,10 +64,10 @@ const guarantees = [
 ];
 
 const stats = [
+  { value: "10,000", label: "concurrent sockets, one pod" },
   { value: "176 ms", label: "ACK p95 under load" },
-  { value: "280", label: "automated tests" },
+  { value: "285", label: "automated tests" },
   { value: "60/60", label: "messages survive a pod kill" },
-  { value: "AES-256", label: "GCM, RFC-vectored" },
 ];
 
 const IndexPage = () => {
@@ -234,7 +234,7 @@ const IndexPage = () => {
               <span className="text-lg font-bold text-white">CipherChat</span>
             </div>
             <p className="text-gray-500 text-sm">
-              TypeScript · React · Socket.IO · MongoDB · Redis — 280 automated
+              TypeScript · React · Socket.IO · MongoDB · Redis — 285 automated
               tests, RFC-vectored crypto, kill-a-pod verified
             </p>
             <p className="text-gray-600 text-xs mt-3">

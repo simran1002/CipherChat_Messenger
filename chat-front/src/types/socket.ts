@@ -158,9 +158,15 @@ export interface ClientToServerEvents {
   syncOfflineQueue: (p: { messages: OfflineQueueItem[] }, ack?: () => void) => void;
 }
 
+/** Bounded roster: `users` is the first N entries, `total` the real headcount. */
+export interface RosterPayload {
+  total: number;
+  users: OnlineUserPublic[];
+}
+
 /** Events the client receives. */
 export interface ServerToClientEvents {
-  onlineUsers: (users: OnlineUserPublic[]) => void;
+  onlineUsers: (roster: RosterPayload) => void;
   heartbeatAck: (p: { ts: number }) => void;
   userJoined: (p: { userId: string; name: string }) => void;
   newMessage: (p: NewMessagePayload) => void;

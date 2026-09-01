@@ -40,10 +40,35 @@ Single-org deployments:
 | Assumption | Value | What it drove |
 |---|---|---|
 | Users per org | 50 – 5,000 | Membership arrays on room docs (not a join collection); per-room unread counts as indexed range-counts |
-| Concurrent sockets per pod | ≤ 500 | 2–4 pods behind nginx `ip_hash`; per-user rooms for cross-pod targeting |
+| Concurrent sockets per pod | ≤ 500 message-active (budget); **10,000 held connections measured** — see the connection-density benchmark below | 2–4 pods behind nginx `ip_hash`; per-user rooms for cross-pod targeting; bounded + throttled roster broadcasts |
 | Peak message rate | ~200 msg/s org-wide | Lua token bucket (20 burst / 2 s refill per user); k6 threshold p95 < 250 ms at 100 msg/s on 2 pods |
 | History growth | ~10 M messages/yr, tens of GB | Cursor pagination on `_id` (offset/skip degraded linearly); `{chatroom, sequenceNumber}` and `{chatroom, createdAt}` indexes |
 | Redis working set | < 1 GB | Single Redis node; Cluster/Sentinel named as the growth path |
+
+### Measured: connection density (scripts/connflood.mts, single pod)
+
+"Concurrent users" and "message throughput" are different axes — most of a
+chat org is connected but quiet. The connection-density benchmark ramps real
+authenticated websocket connections with live presence heartbeats, holds
+them, then pushes a message probe THROUGH the held load to prove the pod is
+serving, not just accepting:
+
+| Metric | Result |
+|---|---|
+| Concurrent connections held on ONE pod | **10,000 / 10,000, zero failures** (74 s ramp, 60 s hold, server gauge confirmed) |
+| Server memory at 10 k | 470 MB RSS ≈ **47 KB/socket** |
+| Delivery probe through the held 10 k | 200/200 ACKed, **p50 43 ms, p95 95 ms** |
+
+Getting there took three fixes, each documented in INTERVIEW-REVIEW: the
+roster was re-broadcast unbounded to every socket on every connect (O(N³)
+traffic during a ramp — now bounded to 100 entries + throttled with trailing
+coalescing); a single-process load generator starves its own event loop past
+~5 k sockets and the server's ping timeout reaps healthy connections (the
+generator now shards across 4 worker processes); and free-tier Atlas's
+~100 ops/s throttle melted under per-connect bookkeeping (the bench runs
+against a local RAM-backed mongod — scripts/benchdb.mts). Caveats stated:
+one machine, loopback, mostly-idle connections — message throughput at scale
+is the k6 table below, not this number.
 
 ### Measured (k6, 50 VUs × 60 s, via the nginx LB on the 2-replica compose stack)
 

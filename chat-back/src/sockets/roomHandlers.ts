@@ -3,6 +3,7 @@ import { Message } from "../models/Message.js";
 import { RoomReadState } from "../models/RoomReadState.js";
 import { canAccessRoom, ensureMembership, getAccessibleRoomSummary } from "../services/roomAccess.js";
 import { senderInfo } from "../services/userInfo.js";
+import { rosterPayload } from "./presenceHandlers.js";
 import { dedup, metrics, presenceRegistry, rateLimiter, seqCounter, typingMgr } from "../shared/index.js";
 import { messageLatency, messagesTotal } from "../shared/prometheus.js";
 import { errMessage, logger } from "../utils/logger.js";
@@ -23,7 +24,7 @@ export function registerRoomHandlers(io: AppServer, socket: AppSocket): void {
     if (u) socket.to(chatroomId).emit("userJoined", { userId, name: u.name });
     // A page that mounts after the socket connected missed the connect-time
     // roster broadcast — hand this socket the current roster directly.
-    socket.emit("onlineUsers", await presenceRegistry.list());
+    socket.emit("onlineUsers", await rosterPayload());
   });
 
   socket.on("leaveRoom", ({ chatroomId }) => {
