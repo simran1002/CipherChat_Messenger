@@ -15,4 +15,3 @@ backend/.mvn/** linguist-vendored=true
 docs/** linguist-documentation=true
 load/** linguist-detectable=false
 scripts/** linguist-detectable=false
-*.postman_collection.json linguist-generated=true

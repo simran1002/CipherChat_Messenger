@@ -27,6 +27,8 @@
 		<url/>
 	</scm>
 	<properties>
+		<!-- Boot 4.1.1 manages Tomcat 11.0.24, which carries CVE-2026-65182/65905/68525 (auth bypasses). -->
+		<tomcat.version>11.0.25</tomcat.version>
 		<java.version>21</java.version>
 		<spring-modulith.version>2.1.1</spring-modulith.version>
 		<springdoc.version>3.1.0</springdoc.version>
