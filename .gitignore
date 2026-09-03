@@ -1,0 +1,4 @@
+# Terraform working directory (providers, module clones) — never commit; the lock file is committed
+infrastructure/terraform/.terraform/
+# Local upload storage written by the backend
+backend/data/
