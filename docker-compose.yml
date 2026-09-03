@@ -1,64 +1,158 @@
-# Single-node development stack.
-# Phase 2 adds docker-compose.scale.yml: nginx LB + 2 backend replicas + Redis-backed state.
+# Full local stack: PostgreSQL + Redis + Kafka (KRaft) + Spring Boot backend + nginx-served frontend.
+#   docker compose up --build
+#   docker compose --profile s3 up --build      # adds MinIO and switches uploads to the S3 driver
+# Every service has a health check; the backend waits for its dependencies to be *healthy*,
+# not merely started, so a first boot never races Flyway against a Postgres still initialising.
+name: cipherchat
+
 services:
-  mongo:
-    image: mongo:7
+  postgres:
+    image: postgres:17-alpine
     restart: unless-stopped
+    environment:
+      POSTGRES_DB: cipherchat
+      POSTGRES_USER: cipherchat
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-cipherchat}
+    command: ["postgres", "-c", "max_connections=200", "-c", "shared_buffers=256MB"]
     volumes:
-      - mongo-data:/data/db
+      - postgres-data:/var/lib/postgresql/data
     ports:
-      - "27017:27017"
+      - "5432:5432"
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "pg_isready -U cipherchat -d cipherchat"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
 
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
     ports:
       - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
+      interval: 5s
       timeout: 3s
-      retries: 5
+      retries: 12
+
+  kafka:
+    image: apache/kafka:3.9.0
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 6
+      KAFKA_LOG_RETENTION_HOURS: 168
+      CLUSTER_ID: cipherchat-local-cluster-1
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    ports:
+      - "29092:29092"         # host tools (kcat, IDE plugins) → localhost:29092
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
 
   backend:
-    build: ./chat-back
+    build: ./backend
     restart: unless-stopped
     depends_on:
-      mongo:
+      postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
     environment:
-      DATABASE: mongodb://mongo:27017/cipherchat
-      SECRET: ${SECRET:-dev-only-secret-change-me-please-32chars!}
-      PORT: "8000"
-      ENV: ${ENV:-DEVELOPMENT}
+      PORT: "8080"
+      DATABASE_URL: jdbc:postgresql://postgres:5432/cipherchat
+      DATABASE_USER: cipherchat
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-cipherchat}
       REDIS_URL: redis://redis:6379
-      FRONTEND_URL: http://localhost:3000
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-please-32-chars!!}
+      SEAL_SECRET: ${SEAL_SECRET:-dev-only-seal-secret-change-me-please-32-chars!!}
+      CORS_ALLOWED_ORIGINS: http://localhost:3000,http://localhost:5173
+      PUBLIC_BASE_URL: http://localhost:8080
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
+      UPLOAD_DIR: /data/uploads
+      S3_BUCKET: ${S3_BUCKET:-cipherchat-uploads}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-}
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LOG_FORMAT: ${LOG_FORMAT:-}
     ports:
-      - "8000:8000"
+      - "8080:8080"
     volumes:
-      # Named volume so uploads survive container replacement (and are shared
-      # between replicas in the scale-out compose file)
-      - uploads:/app/uploads
+      - uploads:/data/uploads
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health/readiness"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 60s
 
   frontend:
     build:
       context: ./chat-front
       args:
-        VITE_API_URL: http://localhost:8000
+        VITE_API_URL: http://localhost:8080
     restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
       - "3000:80"
 
+  # ── optional: object storage for uploads (docker compose --profile s3 up) ──
+  minio:
+    image: minio/minio:latest
+    profiles: ["s3"]
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${AWS_ACCESS_KEY_ID:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  minio-init:
+    image: minio/mc:latest
+    profiles: ["s3"]
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${AWS_ACCESS_KEY_ID:-minioadmin} ${AWS_SECRET_ACCESS_KEY:-minioadmin} &&
+      mc mb --ignore-existing local/${S3_BUCKET:-cipherchat-uploads} &&
+      mc anonymous set download local/${S3_BUCKET:-cipherchat-uploads}"
+
 volumes:
-  mongo-data:
+  postgres-data:
+  kafka-data:
   uploads:
+  minio-data:
