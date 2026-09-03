@@ -3,6 +3,9 @@
 A self-administered SDE-3 interview pass over this repository: the questions
 a strong interviewer is likely to ask, the concept each one is really
 probing, and an honest account of what impresses vs. what can be attacked.
+The system under review is the Java / Spring Boot modular monolith in
+`backend/` (ADR-0010); an appendix keeps the history of the previous Node
+implementation because several of its lessons still apply.
 
 ---
 
@@ -11,299 +14,159 @@ probing, and an honest account of what impresses vs. what can be attacked.
 ### Architecture & scalability
 | Question | Concept to explain (and where it lives) |
 |---|---|
-| "Walk me through what happens when I hit Send." | The 5-layer delivery pipeline: optimistic UI → ACK/retry → offline queue → Redis dedup → sequence + DB backstops (ADR-0007, ARCHITECTURE.md sequence diagram) |
-| "Why sticky sessions? Doesn't that defeat load balancing?" | Socket.IO's long-polling fallback needs request affinity; fan-out between pods rides the Redis adapter, so stickiness affects only connection placement, not delivery (deploy/nginx-lb.conf) |
-| "What breaks first as you scale?" | Named triggers in the scaling-milestones table: single Redis (>4 pods), synchronous persistence (>500 msg/s → queue), room hot-spotting (sharding). Knowing the *order* is the point |
-| "Why not microservices?" | One org per deployment, tens of rps — a modular monolith with interface seams (shared/, services/) is the honest fit; the seams are where services would split if triggers fire |
-| "Why Mongo and not Postgres?" | Document shape fits messages; the real answer is the invariants are enforced regardless: unique partial indexes, watermark rows, TTL indexes. Engineering is in the constraints, not the brand |
+| "Walk me through what happens when I hit Send." | rate limit → Redis dedup → seeded per-room `INCR` → one transaction (message + watermark + outbox row) with two unique indexes as the backstop → ACK; after commit: Redis fan-out to every replica, Kafka for the durable afterwards (`ARCHITECTURE.md` § request paths, `MessageService.sendDraft`) |
+| "Why a modular monolith and not microservices?" | One org per deployment, ~200 msg/s; the hot path touches auth, membership, sequence, persistence and fan-out — hops and sagas for no scaling win. Boundaries are enforced by `ModularityTests`; modules talk through events that already go to Kafka, so extraction later is a consumer move, not a redesign (ADR-0010) |
+| "Why no sticky sessions?" | STOMP over raw WebSocket, no polling fallback; the socket is pinned by TCP, everything *about* the session (presence, buckets, counters) is in Redis or Postgres; fan-out rides Redis pub/sub so any pod can hold any socket (`SCALABILITY.md`) |
+| "Why Postgres and not Mongo this time?" | The guarantees are unique indexes: `(room, sequence)`, `client_message_id`, `(conversation, sender, sessionId, ctr)`, `lower(email)`. Constraints are the engineering; Postgres makes them first-class and transactional with the outbox row (`DATABASE_DESIGN.md`) |
+| "What breaks first as you scale?" | Postgres write path (single writer) — idle at the envelope, read replicas for history/search first; then Kafka partitions (12 → migration); then presence Redis. `SYSTEM_DESIGN.md` §10 names the order |
+| "Where is Kafka the wrong tool here, and what did you use instead?" | Live fan-out to WebSocket sessions — consumer groups mean one pod would get each event; you'd need a group per pod and pay Kafka's latency floor. Redis pub/sub does "every replica sees every event"; durability is Postgres + Kafka, never pub/sub (`KAFKA_DESIGN.md`) |
 
 ### Concurrency & consistency
 | Question | Concept |
 |---|---|
-| "Two replicas receive the same retry simultaneously — what happens?" | Redis `SET NX` is the atomic arbiter; loser ACKs with the winner's id. DB unique index is the belt-and-suspenders (tests double-send deliberately) |
-| "How do you order messages across replicas?" | Per-room Redis `INCR` — atomic, seeded from Mongo max on first touch so restarts never re-issue. Global order deliberately not promised |
-| "Your rate limiter is read-modify-write — race?" | It isn't: the token bucket is a single Lua script, atomic in Redis; there's a concurrency test firing 30 parallel requests asserting exactly `capacity` admits |
-| "Two browser tabs share IndexedDB ratchet state — corruption?" | Web Locks serialize counter reservation; counter-addressed decryption makes interleaving harmless (ADR-0003) |
-| "markRead upsert races itself" | The `$lt`-guarded upsert can 11000 on first concurrent write; caught and retried as `$max` — idempotent by construction (chatroomController.markRead) |
+| "Two replicas receive the same retry simultaneously." | Redis `SET NX` picks a winner; the loser finds the row and ACKs `duplicate: true`. If Redis is stale, the `client_message_id` unique index refuses the second insert and `DataIntegrityViolationException` is resolved to the existing row — in a `REQUIRES_NEW` transaction so the resolution can run after the rollback. `MessagingIT` double-sends |
+| "How do you order messages across replicas?" | Per-room Redis `INCR`, seeded once from `max(sequence_number)`; the `(room, sequence)` unique index guarantees a wrong counter can't produce two messages in one slot. Global order deliberately not promised |
+| "Your Kafka consumer crashed after writing the notification but before committing the offset." | Redelivery → `processed_events(consumer, event_id)` claim loses → no-op. The claim shares the side effect's transaction (`Propagation.MANDATORY` so forgetting `@Transactional` fails loudly). `KafkaConsumersIT` asserts exactly one inbox row |
+| "Kafka is down. What happens to a send?" | Nothing — the publication row is committed with the message (transactional outbox) and republished when the broker returns. Readiness reports the dependency, sends keep ACKing |
+| "Your rate limiter is read-modify-write — race?" | Single Lua script, atomic in Redis; shared across pods; fails **open** if Redis is unreachable (logged) |
+| "Two users click 'start conversation' at once." | `(user_low, user_high)` unique with `user_low < user_high` CHECK; loser re-reads. Race handled by the index, not by a lock |
 
 ### Security & crypto
 | Question | Concept |
 |---|---|
-| "Why roll your own protocol instead of libsignal?" | ADR-0003's rejection table: web packaging, and the interview-honest reason — a correct, testable, honestly-scoped protocol demonstrates more than an integrated black box. Every primitive is audited (@noble), only the *composition* is mine, and the composition is vector-tested |
-| "Where does forward secrecy actually stand?" | Session-granular (200 msgs / 7 days), not per-message. Stated plainly; upgrade path = DH-ratchet-as-new-session. Interviewers respect the honest boundary more than an inflated claim |
-| "What stops me replaying a ciphertext into another conversation?" | AAD binds `{conversationId, senderId, sessionId, ctr}` — GCM tag fails; plus client counter dedup and a server unique index on (conversation, session, ctr) |
-| "XSS steals the access token — then what?" | 15-minute blast radius, rotation-on-use refresh cookie is httpOnly, replay-after-rotation is the theft tripwire → 401 (ADR-0005). Known residual risk, documented |
-| "Who can read room messages?" | The operator — on purpose. Two privacy tiers, honestly labeled; AI features require plaintext (ADR-0004). This is the strongest product-thinking answer in the repo |
+| "The server can't read DMs — so what can it enforce?" | Three things, all it needs: prekey signature verification (JDK Ed25519) so the directory can't serve mixed bundles; structural envelope validation with size caps so the opaque channel isn't free storage; the `(conversation, sender, sessionId, ctr)` unique index so a counter is spent once cluster-wide (`SECURITY.md`) |
+| "Why roll your own protocol instead of libsignal?" | ADR-0003's rejection table: web packaging, and a correct, testable, honestly-scoped protocol demonstrates more than an integrated black box. Primitives are audited (`@noble`), only the composition is ours, and the composition is vector-tested |
+| "Where does forward secrecy actually stand?" | Session-granular (200 msgs / 7 days), not per-message. Stated plainly; upgrade path = DH ratchet as new session |
+| "XSS steals the access token — then what?" | 15-minute blast radius; refresh cookie is httpOnly and rotates on use; a replayed rotated token is a 401 **and an audit event** (`user.refresh_rejected`) — the theft tripwire is now recorded, not just refused |
+| "How does a failed login get audited if the transaction rolls back?" | `AuditPublisher.publishDetached` — `REQUIRES_NEW`, so the evidence commits even though the login's exception rolls the outer transaction back. Successes join the transaction so a rolled-back password change leaves no "changed" trace |
+| "An ADMIN role in the DB — how does it reach the request?" | Signed into the JWT (`role` claim) from `UserView.role`; `/api/v1/admin/**` requires `ROLE_ADMIN`. (The previous implementation hardcoded the role — found and fixed during the port) |
+| "Who can read room messages?" | The operator — on purpose. Two privacy tiers, honestly labeled; AI features and server search require plaintext (ADR-0004) |
 
 ### Testing, ops, performance
 | Question | Concept |
 |---|---|
-| "How do you know the crypto is right?" | RFC 7748/8032/5869 + NIST GCM known-answer vectors pinned in CI, golden transcript fixtures, tamper/replay/out-of-order/rotation suites |
-| "How do you test socket flows without mocks lying to you?" | Real server on an ephemeral port + real socket.io-client + mongodb-memory-server; the Redis suite runs against a real Redis service container in CI |
-| "What's your p95 and how do you know?" | k6 script speaking raw engine.io frames, threshold p95<250ms @ ~100 msg/s on 2 pods; prom-client histograms in prod (buckets 5→2500ms) |
-| "A pod dies mid-deploy — walk me through it." | SIGTERM → io.close → drain → mongoose disconnect; clients retry/queue; dedup absorbs replays; seeded counters prevent seq reuse; the demo literally kills a pod |
-| "Why cursor pagination?" | offset/skip scans linearly with depth; `_id` cursors are O(log n) index seeks and stable under concurrent inserts (works for pre-sequence legacy rows too) |
+| "How do you know the crypto is right?" | Client: RFC 7748/8032/5869 + NIST GCM vectors, golden transcript, tamper/replay/out-of-order/rotation suites. Server: TOTP against RFC 6238 vectors, SecretBox tamper test, Ed25519 verify with JDK-generated keys |
+| "How do you test the socket layer without mocks lying to you?" | `StompGatewayIT`: real Spring context on a random port, real `WebSocketStompClient`, real Postgres/Redis/Kafka from Testcontainers — connect with a JWT, send, assert the ACK on the private queue and the broadcast on another user's subscription, then the duplicate ACK with no second broadcast |
+| "A pod dies mid-deploy — walk me through it." | `maxUnavailable: 0` so the surge pod is ready first; preStop sleep so the LB stops routing; SIGTERM → Spring graceful shutdown drains in-flight requests (grace period > shutdown timeout); clients reconnect via `least_conn`, drain the offline queue idempotently; outbox rows on the dead pod are republished by any survivor |
+| "What's your p95 and how do you know?" | `cipherchat.send.latency` timer publishes p50/p95/p99 to Prometheus and the in-app dashboard; the STOMP and HTTP ITs are the correctness floor, the k6 run against `/ws` is the next measurement to refresh (previous-implementation numbers in the appendix) |
+| "Why cursor pagination?" | offset scans linearly with depth; `sequence_number` / `id` cursors are index range scans and stable under concurrent inserts |
+| "How do you keep the modules honest over time?" | `ApplicationModules.verify()` runs in the unit stage: an undeclared dependency or a reach into another module's internals is a red build. `Documenter` regenerates the C4 diagrams so the architecture doc can't drift |
 
 ---
 
 ## WOW factors
 
-1. **The kill-a-pod demo, as an asserted test** — `npm run demo:failover`
-   auto-detects the socket-owning replica, stops it at message #30 of 60,
-   and asserts: 60/60 persisted exactly once, sequence numbers gap-free
-   across the pod switch, both clients reconnected once, the in-flight
-   message retried once onto the survivor, 0 duplicate deliveries. Measured
-   failover gap ≈ 2.4 s; steady-state ACK p50 14 ms.
-2. **RFC-vectored crypto, verified live** — every primitive is pinned to
-   official test vectors in CI, with tamper/replay suites; and the full flow
-   was exercised across two isolated browser origins: setup gate, recovery
-   code, X3DH-lite `init` envelope, both chain directions decrypting live,
-   matching 60-digit safety numbers, and a database holding only
-   `e2ee/v1` ciphertext. Almost no portfolio project does either half.
-3. **Five-layer delivery guarantee with a test that double-sends** — the
-   exactly-once claim is executable, not aspirational.
-4. **ADRs that reject alternatives** — every major choice names what it
-   turned down (Double Ratchet, libsignal, Kafka, monorepo) and the cost
-   accepted. This is the SDE-3 signal.
-5. **Two privacy tiers as a product decision** — E2EE DMs vs server-readable
-   AI rooms, with the trade-off argued instead of hidden.
-6. **Interfaces with two real implementations** — the same test-covered
-   contract runs in-memory (dev) and on Redis (prod), selected by config;
-   CI exercises both.
-7. **Content-free observability** — a metrics design constraint derived from
-   the product's privacy promise, visible in a live dashboard.
-8. **Theft-detecting refresh rotation** — replay of a rotated token is
-   treated as a signal, not just an error.
-9. **190-file TypeScript migration with typed socket event maps** — payload
-   drift between client and server is a compile error.
+1. **Guarantees enforced by the database, not by discipline** — every
+   "cannot happen" maps to a unique index, a transaction boundary or a test.
+   The ACK is a promise Postgres keeps.
+2. **The transactional outbox, end to end** — message row and event row
+   commit together; Kafka down never fails a send; consumers are idempotent
+   through a ledger inside the side-effect transaction; poison records
+   dead-letter without blocking. `KafkaConsumersIT` watches a mention become
+   exactly one inbox row through the real broker.
+3. **E2EE where the server still polices the protocol** — prekey signature
+   verification, structural envelope validation, and a replay unique index,
+   with a `409 replayed_counter` you can trigger in an integration test.
+4. **Build-time architecture** — Spring Modulith turns the module diagram
+   into a failing test.
+5. **No sticky sessions, provably** — STOMP over raw WS, Redis fan-out, a
+   `least_conn` LB, and a kill-a-pod demo that reconnects to the survivor.
+6. **Two privacy tiers as a product decision** — E2EE DMs vs server-readable
+   AI rooms, argued instead of hidden (ADR-0004).
+7. **Audit that survives rollback** — detached publication for failures;
+   refresh-token replay is an event, not just an error.
+8. **Deployment as code, with the failure it fixes documented** — Dockerfile,
+   Compose, Kubernetes (HPA/PDB/probes/IRSA), Terraform, Render blueprint,
+   and a root-cause analysis of why dashboard-configured deploys kept
+   failing (`DEPLOYMENT.md`).
+9. **Content-free observability as a constraint** — counters, timings,
+   correlation ids; DM events carry no content by construction.
 10. **An honest threat model in the README** — including "a malicious client
     build served by the operator," which most web-E2EE products omit.
 
 ---
 
-## Weak points (and their status)
+## Weak points (defend, don't hide)
 
-**Remediated during this review:**
-- ~~Sensitive-data detector missed "Your OTP is 123456" (order-sensitive) and
-  bare `sk-…` keys~~ → patterns fixed for both orders + well-known bare key
-  shapes; tests extended.
-- ~~`getMembers` returned `myRole: null` for everyone~~ (populate-before-
-  compare bug) → fixed with a regression guard.
-- ~~Sending never recorded room participation despite the documented
-  contract~~ → send path now ensures membership.
-- ~~No session listing / revocation UI~~ → `GET/DELETE /user/sessions[/:id]`
-  (owner-scoped, current-session flagged, "sign out everywhere else") +
-  Active-sessions card on the profile page; 4 integration tests.
-- ~~Search was an O(room) regex scan~~ → `$text` on the compound
-  `{chatroom, message}` index ranked by score, escaped-regex fallback only
-  for partial words / symbols.
-- ~~Legacy offset-pagination branch~~ → removed; cursor-only endpoint, stray
-  `?page` is ignored (tested).
-- ~~Envelope size cap undocumented~~ → derivation comment (2000 chars → 8192B
-  bucket + tag → ~10.9 KB base64; 16 KB cap) next to the validator.
-- ~~Redis suite only ran in CI~~ → 9/9 verified locally against a real Redis
-  container.
-- ~~Graceful shutdown hung for the full 10 s grace and force-exited~~ — found
-  by the kill-a-pod run: `server.close()` waits on the reverse proxy's idle
-  keep-alive connections. Now `closeIdleConnections()` immediately and
-  `closeAllConnections()` after a 2 s drain; the pod exits cleanly.
-- ~~Failover demo was a manual eyeball~~ → `npm run demo:failover`
-  (`chat-back/src/scripts/failoverCheck.ts`) stops a pod mid-stream and
-  asserts exactly-once persistence, gap-free sequences, and exactly-once
-  receipt on the other client. It also caught that the verifier (like any
-  client) must handle `"io server disconnect"` explicitly — socket.io won't
-  auto-reconnect after a server-initiated close; the app already did.
-- nginx LB tuned for failover: `max_fails=2 fail_timeout=5s`,
-  `proxy_connect_timeout 2s`, `proxy_next_upstream` on connect errors — a
-  dead pod is sidelined in ~2 s instead of several, and retries are safe
-  because the dedup layer makes replayed sends idempotent.
-
-**Accepted and documented (defend, don't hide):**
-- **Session-granular forward secrecy** — the honest Megolm-style trade
-  (ADR-0003); upgrade path documented.
-- **Single-device E2EE** — new browser = restore-with-recovery-code or
-  reset-with-banner; multi-device is the canonical v2 (Signal shipped
-  single-device first too).
-- **Access token readable by XSS for ≤15 min** — mitigation stack in
-  ADR-0005; full fix conflicts with the socket handshake.
-- **Metadata visible to the server** — inherent to routing; padding buckets
-  blunt size analysis only.
+**Accepted and documented:**
+- **Session-granular forward secrecy** (ADR-0003); upgrade path documented.
+- **Single-device E2EE** — restore-with-recovery-code or reset-with-banner;
+  multi-device is the canonical v2.
+- **Access token readable by XSS for ≤ 15 min** — mitigation stack in
+  ADR-0005 and the audit tripwire.
+- **Metadata visible to the server** — inherent to routing.
+- **Redis pub/sub is lossy** — live frames during a Redis blip are lost for
+  that pod's sessions; clients resync by sequence on reconnect. Durability
+  never depends on pub/sub (`SCALABILITY.md`).
+- **Rate limiter fails open** — availability over strictness for a chat;
+  logged when it happens.
+- **Analytics counters are at-least-once** — a DB write per message to make
+  a Prometheus counter exactly-once is the wrong trade; drift is bounded and
+  visible in consumer-lag metrics.
+- **In-app metrics dashboard is per-instance** — cluster-wide views are
+  Prometheus/Grafana; the page says so.
 - **AI features send room plaintext to an external API** — off by default
-  (no key configured, 503s gracefully), and `AI_BASE_URL` points the client
-  at any Anthropic-compatible in-org gateway (LiteLLM, corporate proxy), so
-  the self-hosted deployment story extends to AI: transcripts need never
-  leave the org's infrastructure.
+  (503 without a key), `AI_BASE_URL` points at an in-org gateway, and the
+  call sits behind a circuit breaker.
+- **No account lockout after N failed logins** — rate limiter + audit only;
+  a deliberate choice against user-facing DoS.
+- **No email-based password reset** — no mail sender in this version.
 
-**Measured, with the caveats stated up front (from the k6 + failover runs):**
-- **Hot-room fan-out is the real ceiling**: 50 users all typing in one room
-  (50× fan-out ≈ 2,900 deliveries/s) pushed one pod to p95 2.55 s; the
-  representative 10-room split met the 176 ms p95. Say it before they ask:
-  "delivery load is sends × room size, and a single Node event loop tops out
-  around a few thousand socket writes per second — the batching/Kafka
-  milestone is gated on that, not on raw message rate."
-- **IP-hash stickiness makes single-source load tests one-pod tests** —
-  Prometheus showed `backend2` at zero during both k6 runs. That's a property
-  of `ip_hash`, not a bug, but it means "2 pods" in the demo proves shared
-  state + failover, while the throughput numbers are per-pod. The shipped
-  websocket-only `least_conn` profile (`npm run stack:scale:ws`) removes the
-  stickiness requirement entirely — the follow-up question is "why can you
-  drop ip_hash there?", and the answer is "stickiness only ever existed for
-  the long-polling fallback."
-- **The `/user` rate limiter (100/15 min/IP, Redis-shared) bites load-test
-  setup** — 50 registrations per run from one IP; documented in the script.
-  Proof the limiter is cluster-wide; also a reminder that test harnesses need
-  either token reuse or an explicit bypass in non-prod.
+**Not yet verified in this repository state (say so before they ask):**
+- The Testcontainers integration suites (`*IT`) and the Compose/Kubernetes
+  manifests were written against the real contracts but could not be
+  executed in the environment where the port was done (no Docker daemon).
+  Unit tests, the Modulith boundary test and the full compile are green;
+  the ITs are the next thing to run. `LOCAL_DEVELOPMENT.md` has the command.
+- Throughput and connection-density numbers below are from the previous
+  implementation; the harness (`scripts/connflood.mts`, k6) targets Socket.IO
+  and needs a STOMP client to refresh them against `/ws`.
 
-- ~~Uploads lived on a shared Docker volume~~ → `IFileStorage` with
-  `local` and `s3` drivers (`STORAGE_DRIVER`, any S3-compatible endpoint
-  incl. MinIO/R2), multer → memory, replaced avatars reclaimed, S3 driver
-  unit-tested with an injected fake client (ADR-0008).
-- ~~`/user/refresh` shared the generic `/user` bucket~~ → dedicated 30/15 min
-  limiter on top.
+**Known gaps an interviewer could press:**
+- **Room text search is whole-word/stemmed**; short queries fall back to an
+  escaped ILIKE scan bounded to the room.
+- **Kafka partition count is a one-way door** — raising it needs a topic
+  migration; 12 in prod is sized for the envelope with headroom.
+- **`processed_events` retention (7 days) must exceed Kafka retention** for
+  the ledger to be complete; both are configuration, documented together.
 
-- ~~Frontend tests covered hooks/services/crypto but no components~~ → 44
-  Testing-Library render tests (RoomMembersPanel, E2EESetupGate,
-  SafetyNumberModal, MetricsDashboardPage) with framer-motion/recharts stubbed.
-- ~~Golden E2EE transcript lived only inside a test~~ → committed
-  `src/crypto/fixtures/golden-transcript.json` (RFC-vector private scalars,
-  fixed ephemeral + sessionId); tests assert every envelope decrypts AND that
-  re-sealing is byte-identical — a second implementation needs only the JSON.
-- ~~"KATs against both noble and WebCrypto"~~ → interchangeability suite:
-  AES-256-GCM / HKDF / HMAC computed via `crypto.subtle` and via noble on the
-  same vectors are byte-identical and cross-decrypt; X25519 shared secrets
-  agree between WebCrypto keys and noble (Node 20 supports it).
-- ~~`SocketContext` coexisted with `socket` props~~ → props removed; Header
-  and every page read `useSocket()`.
-- ~~No Vite dev proxy~~ → same-origin default + proxy for API prefixes and
-  `/socket.io` (ws); fresh clone needs no `.env`, dev has no CORS.
-- ~~Recovery code dismissible with one click~~ → explicit "I have written this
-  code down" acknowledgement gates the continue button (test pins it).
-- ~~`markVerified` silently no-op'd without a pin while the badge flipped~~ →
-  now throws; the modal's existing error path shows it.
-- ~~No demo recording in the README~~ → real-output terminal render (SVG) of
-  the failover PASS, linked to the reproducible script.
+---
 
-- ~~DM attachments were not E2EE~~ → each file is sealed client-side with its
-  own AES-256-GCM key and uploaded as `application/octet-stream` to a
-  dedicated `/upload/encrypted` route; key/IV/name/MIME/size travel only
-  inside the E2EE envelope (a `__dmc` JSON content protocol that keeps plain
-  text byte-compatible). The server can't learn even the file *type*.
-  Tamper = GCM failure rendered as an inline error. Tests: round-trip,
-  fresh-key-per-file, tamper/wrong-key, hostile-JSON fallback, route
-  MIME-isolation.
-- ~~Attachment ciphertext transited the API pod~~ → `POST
-  /upload/encrypted/presign` + browser-direct PUT when object storage is
-  configured; the signature pins content type AND exact byte length, so the
-  server-side size cap holds bucket-side too. Local driver answers 501 and
-  the client falls back to the proxied route — tests cover both paths on
-  both sides (ADR-0008).
-- ~~Typing TTL timers were per-pod (a killed pod could leave ghost
-  typers)~~ → Redis TTL keys + keyspace notifications: every pod hears the
-  expiry and clears its local sockets, so the indicator dies with the key,
-  not with the pod. Falls back to per-pod timers where `CONFIG SET` is
-  disabled (managed Redis); exercised against real Redis in CI.
-- ~~`least_conn` was documented-only~~ → shipped as a compose override +
-  `deploy/nginx-lb-ws.conf` with websocket-only clients
-  (`VITE_SOCKET_TRANSPORTS=websocket`), since stickiness only ever served
-  the long-polling fallback.
-- ~~The room header claimed "end-to-end encrypted"~~ — leftover copy from
-  before the E2EE split that contradicted the documented threat model (rooms
-  are deliberately server-readable, ADR-0004). Caught while screenshotting;
-  now says "exactly-once delivery", which rooms actually guarantee. The
-  lesson stated plainly: every privacy claim in the UI must match the
-  architecture, or the whole threat model reads as marketing.
-- ~~The Vite proxy shadowed the app's `/metrics` route in dev~~ — hard
-  reloads served the backend's Prometheus text instead of the dashboard page
-  (the dashboard's data comes from `/analytics`; the prefix never belonged
-  in the proxy list).
-- ~~A stolen password was the whole ballgame~~ → **TOTP 2FA** (ADR-0009):
-  QR enrollment confirmed with a live code, 8 single-use bcrypt-hashed
-  backup codes, AES-sealed seeds, a dedicated 10-per-5-min limiter on code
-  entry, and a two-step login built on a scoped pending token. The detail
-  to lead with: the access-token verifier rejects **any** JWT carrying a
-  scope claim, so the password-step token is structurally incapable of
-  authenticating a request — no allowlist to forget, no flag to check.
-  Verified three ways: 6 integration tests (including "pending token on
-  /user/profile → 401" and "backup code works exactly once"), 8 component
-  tests, and a scripted live run enrolling via the real UI and signing in
-  from a second browser with a generated code.
-- **The live verification caught a real E2EE flaw** (best story of the
-  pass): the recovery backup was uploaded exactly once, at setup — before
-  any session existed — so every conversation started later was
-  unrecoverable on a new device, while the UI promised otherwise. Fix: the
-  PBKDF2-derived backup key (never the human code) is kept in the wrapped
-  key store, and the blob is re-uploaded whenever a session is created or
-  rotated. That's *sufficient*, not just convenient: sessions store chain
-  key #0 and derive per-counter keys forward, so capturing a session once
-  at birth decrypts its entire lifetime. Proof: a fresh browser restored
-  from the code and searched an E2EE conversation — "2 matches in 5
-  decrypted messages". The lesson: unit tests exercised backup round-trips
-  and still missed it; only an end-to-end "new device" walk found the gap
-  between what was backed up and *when*.
-- otplib v13's CJS entry crashes a compiled CommonJS server at boot (it
-  requires an ESM-only dependency) — caught because the verification runs
-  the REAL runtime, fixed with a tsc-preserved dynamic `import()`. Vitest
-  and tsx both masked it; "the tests pass" and "the build boots" are
-  different claims.
-- **The 10k connection-density benchmark** (`scripts/connflood.mts`) — built
-  to replace the "≤500 sockets/pod" assumption with a measurement, it found
-  three distinct bottlenecks before producing a clean number, and only ONE
-  was in the server:
-  1. *Server:* the presence roster was re-broadcast unbounded to every
-     socket on every connect/disconnect — O(N³) wire traffic during a ramp.
-     Fixed: roster payload bounded to `{total, users: first 100}` and
-     broadcasts throttled through `RosterBroadcaster` (leading edge +
-     trailing coalescing; its own unit tests then caught a same-tick burst
-     race in the first implementation — the async send resolved after the
-     guard check, so 500 synchronous requests meant 500 sends).
-  2. *Harness:* a single-process load generator starves its own event loop
-     past ~5k sockets, misses server pings, and the server's ping timeout
-     correctly reaps "healthy" connections — the first run measured the
-     load generator. Sharded across 4 worker processes.
-  3. *Infrastructure:* free-tier Atlas throttles around 100 ops/s; 10k
-     per-connect bookkeeping writes melted it (`read ECONNRESET`). The
-     bench runs on a RAM-backed local mongod, and mass-disconnect DB writes
-     became fire-and-forget so a dying pod's 10k sockets never queue behind
-     per-user round-trips.
-  Final: **10,000/10,000 held on one pod, zero failures, 470 MB RSS, and a
-  delivery probe through the held load ACKing 200/200 at p95 95 ms.** The
-  interview sentence: "knowing which of the three layers is actually
-  failing — server, harness, or infrastructure — IS the benchmark skill;
-  the first two runs measured the wrong layer, and the numbers said so."
+## Appendix — history of the previous (Node) implementation
 
-**Performance-engineering pass (measured A/B, same harness):**
-- The message send path performed **4–5 MongoDB round-trips per message**
-  (room doc, sender doc, watermark upsert, membership guard, insert). Now:
-  a 15s-TTL room-summary cache (invalidated on membership mutations),
-  sender info from the presence registry (DB only as fallback), watermark +
-  participation writes moved off the latency path, and the offline-drain
-  loop's per-item sender lookup hoisted (was 50 queries per drain). DM sends
-  similarly: immutable participants cached, `lastMessageAt` fire-and-forget.
-- **A/B on the identical harness** (20 senders × 1/s, one room,
-  `scripts/loadgen.mts`, dev server + Atlas): ACK RTT p50 **284 → ~100 ms**,
-  p95 **489 → ~195 ms** — the remaining ~100 ms is the single message-insert
-  RTT to Atlas, i.e. the floor.
-- **The speedup exposed a latent race** (the best part of the story): the
-  in-memory SequenceCounter interleaved read → await-seed → write, so
-  concurrent sends on a cold room drew duplicate sequence numbers once the
-  extra DB fetches stopped accidentally serializing them. The DB's unique
-  `{chatroom, sequenceNumber}` backstop caught it exactly as designed (the
-  flood test failed 19/30 with server_error). Fixed with a single-flight
-  seed + synchronous increment; two regression tests pin it. "Optimizations
-  change timing; timing changes expose races; backstops are why you have
-  them" — say this sentence in the interview.
-- Frontend: emoji-mart's dataset now lazy-loads on first picker open —
-  chatroom chunk **526 → 107 KB** (gzip 130 → 30); React/motion split into
-  long-cacheable vendor chunks (first-load gzip ≈ −38%).
+Kept because the lessons transfer and because the measured numbers are the
+only ones that exist until the harness is ported.
 
-**Known gaps an interviewer could press (be ready, or fix next):**
-- ~~E2EE DMs were unsearchable~~ → **on-device search shipped**: it filters
-  the decrypted messages (and attachment filenames, which only exist inside
-  envelopes) in the browser, with the honest caption "searched locally — the
-  server only ever sees ciphertext". Room search stays server-side on the
-  `$text` index. The two search paths ARE the threat model, drawn in UI.
-- **`/user/refresh` shares the generic `/user` rate bucket** (100/15 min) —
-  adequate, but a dedicated tighter bucket would blunt token-guessing noise
-  further. One-line change; not done only to keep the auth ADR stable.
-- **Room text search is whole-word/stemmed** — partial matches fall back to
-  the escaped regex scan, so very short queries still cost O(room).
+**Measured (single Windows laptop, Docker Desktop, everything co-located):**
+- Connection density: **10,000/10,000 concurrent sockets held on one pod**,
+  470 MB RSS, a message probe through the held load ACKed 200/200 at p50
+  43 ms / p95 95 ms. Getting there found three bottlenecks — only one in the
+  server: an unbounded presence-roster re-broadcast on every connect (fixed
+  with a bounded payload and a throttled broadcaster — the design the Java
+  `RosterBroadcaster` keeps); a single-process load generator starving its
+  own event loop; a free-tier database throttling per-connect writes.
+  "Knowing which of the three layers is failing — server, harness, or
+  infrastructure — *is* the benchmark skill."
+- k6, 50 VUs across 10 rooms via the LB: ACK p95 **176 ms** (p50 19 ms);
+  the hot-room case (50× fan-out) reached p95 2.55 s — fan-out, not message
+  rate, is the cost driver.
+- Failover verifier: 60/60 exactly once across a killed socket-owning pod,
+  gap ≈ 2.4 s, one reconnect per client.
+- Hot-path A/B: send path from 4–5 DB round-trips to 1 → ACK p50
+  284 → ~100 ms. The speedup exposed a latent sequence-counter race that the
+  unique-index backstop caught — "optimizations change timing; timing
+  changes expose races; backstops are why you have them." In the Java
+  design the counter is Redis-atomic and the backstop is the same index.
+
+**Remediations from earlier review passes that shaped the current design:**
+sensitive-data detector order bugs; `myRole` populate-before-compare;
+sending now records participation; per-device session list and revocation;
+`$text` search replacing regex scans; cursor-only pagination; envelope size
+cap derivation; graceful shutdown hanging on proxy keep-alives; explicit
+reconnect after server-initiated disconnect; E2EE attachments with per-file
+keys and presigned direct upload; Redis TTL typing indicators (a killed pod
+can't leave ghost typers); TOTP 2FA with a scoped pending token the verifier
+rejects structurally; and the best story of the pass — the recovery backup
+was uploaded only at setup, so sessions created later were unrecoverable on
+a new device; unit tests missed it, an end-to-end "new device" walk found it.
+Each of these is either a constraint or a test in the Java implementation.

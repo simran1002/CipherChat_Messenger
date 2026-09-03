@@ -15,10 +15,10 @@ requirements that actually follow from "self-hosted + sensitive":
 
 | Requirement | What this system does about it |
 |---|---|
-| **Provable delivery** | At-least-once transport with exactly-once persistence: client-UUID dedup, per-room sequence numbers, ACK/retry with backoff, offline IndexedDB queue, DB unique-index backstops. Demonstrated by killing a pod mid-conversation. |
-| **Operator-proof privacy** | E2EE DMs (X3DH-lite + per-direction HMAC chains + AES-256-GCM), self-implemented and pinned to RFC/NIST test vectors, with safety numbers, recovery codes, and an honest threat model. Even the DB admin reads only ciphertext. |
-| **Failure survival** | Horizontal scale-out on Redis-backed coordination, sticky-session LB, graceful shutdown, seeded sequence counters — a rolling deploy or a killed pod loses zero messages. |
-| **Content-free observability** | Operators get p50/p95/p99 latency, delivery rates, and concurrency (Prometheus + in-app dashboard) without any metric that could reveal message content. |
+| **Provable delivery** | At-least-once transport with exactly-once persistence: client-UUID dedup, per-room sequence numbers, ACK/retry with backoff, offline IndexedDB queue — and the guarantee itself lives in PostgreSQL unique indexes, so a wrong counter or a missed dedup *cannot be persisted*. Demonstrated by killing a pod mid-conversation. |
+| **Operator-proof privacy** | E2EE DMs (X3DH-lite + per-direction HMAC chains + AES-256-GCM), self-implemented and pinned to RFC/NIST test vectors, with safety numbers, recovery codes, and an honest threat model. The server verifies prekey signatures and enforces a replay index — the only cryptographic duties it has. Even the DB admin reads only ciphertext. |
+| **Failure survival** | Stateless replicas behind a `least_conn` balancer (no sticky sessions), Redis coordination, a transactional outbox so Kafka being down never fails a send, idempotent consumers with dead-lettering, graceful drain on deploy — a rolling deploy or a killed pod loses zero messages. |
+| **Content-free observability** | Operators get p50/p95/p99 send latency, delivery rates, concurrency and consumer lag (Prometheus + in-app dashboard) without any metric or log line that could reveal message content. |
 
 ## What it deliberately is NOT
 
@@ -27,11 +27,17 @@ requirements that actually follow from "self-hosted + sensitive":
   server-readable team spaces (AI summaries, server-side search, TTL
   self-destruct). Two privacy tiers, honestly labeled — see ADR-0004.
 - **Not a demo of technologies.** Every component traces
-  problem → requirement → decision → trade-off in `docs/adr/`. Redis exists
-  because in-memory dedup double-persists across replicas, not because it
-  looks good on a README.
+  problem → requirement → decision → trade-off in `docs/adr/`. Kafka exists
+  because notifications, audit and analytics must survive a crash and be
+  replayable without touching the send path — not because it looks good on a
+  README. Redis exists because rate limits, sequences and presence must hold
+  across replicas.
+- **Not microservices.** One organisation, ~200 msg/s: a modular monolith
+  whose module boundaries fail the build when violated is the honest fit;
+  the events between modules are the same records that go to Kafka, so a
+  module can leave later without redesign (ADR-0010).
 - **Not "webscale."** The scale assumptions below are defensible for the
-  target customer, and the parts that would change at 100× are named.
+  target customer, and the parts that would change at 10–100× are named.
 
 ## Scale assumptions (and what they drove)
 
@@ -39,85 +45,52 @@ Single-org deployments:
 
 | Assumption | Value | What it drove |
 |---|---|---|
-| Users per org | 50 – 5,000 | Membership arrays on room docs (not a join collection); per-room unread counts as indexed range-counts |
-| Concurrent sockets per pod | ≤ 500 message-active (budget); **10,000 held connections measured** — see the connection-density benchmark below | 2–4 pods behind nginx `ip_hash`; per-user rooms for cross-pod targeting; bounded + throttled roster broadcasts |
-| Peak message rate | ~200 msg/s org-wide | Lua token bucket (20 burst / 2 s refill per user); k6 threshold p95 < 250 ms at 100 msg/s on 2 pods |
-| History growth | ~10 M messages/yr, tens of GB | Cursor pagination on `_id` (offset/skip degraded linearly); `{chatroom, sequenceNumber}` and `{chatroom, createdAt}` indexes |
-| Redis working set | < 1 GB | Single Redis node; Cluster/Sentinel named as the growth path |
+| Users per org | 50 – 5,000 | Membership as a join table with roles; unread counts as indexed range-counts against a per-(user, room) watermark |
+| Concurrent sockets | up to 10,000 org-wide; ~2,000 comfortable per pod | Stateless pods, `least_conn` LB, Redis pub/sub fan-out, bounded + throttled roster broadcasts, HPA on CPU or open sessions |
+| Peak message rate | ~200 msg/s org-wide, 1,000 bursts | Lua token bucket (20 burst / 2 s refill per user); one transaction per send; virtual threads so the pool, not the thread count, is the knob |
+| History growth | ~10 M messages/yr, tens of GB | Cursor pagination on `sequence_number` / `id`; GIN full-text index; attachments in object storage, never in the database |
+| Redis working set | < 1 GB | Single primary with failover; nothing in Redis is a source of truth |
+| Event volume | ~200 events/s | 6–12 partitions keyed by conversation; sized for durability (RF 3), not throughput |
 
-### Measured: connection density (scripts/connflood.mts, single pod)
+**What changes at 10× (and is deliberately out of scope):** read replicas
+for history/search, more Kafka partitions (a topic migration), a dedicated
+presence Redis, monthly partitioning of `messages`, multi-device E2EE
+identities. Each is listed in `SYSTEM_DESIGN.md` §10 with the trigger that
+would justify it.
 
-"Concurrent users" and "message throughput" are different axes — most of a
-chat org is connected but quiet. The connection-density benchmark ramps real
-authenticated websocket connections with live presence heartbeats, holds
-them, then pushes a message probe THROUGH the held load to prove the pod is
-serving, not just accepting:
+## Measured — on the previous implementation
 
-| Metric | Result |
+The numbers below were measured on the Node/Socket.IO implementation this
+system replaced, on one Windows laptop with everything co-located. They are
+kept because they are real, and labelled because they are not yet re-run
+against the Java backend (the harness targets Socket.IO and needs a STOMP
+client; see `INTERVIEW-REVIEW.md`).
+
+| Measurement | Result |
 |---|---|
-| Concurrent connections held on ONE pod | **10,000 / 10,000, zero failures** (74 s ramp, 60 s hold, server gauge confirmed) |
-| Server memory at 10 k | 470 MB RSS ≈ **47 KB/socket** |
-| Delivery probe through the held 10 k | 200/200 ACKed, **p50 43 ms, p95 95 ms** |
+| Connection density, one pod (`scripts/connflood.mts`) | **10,000 / 10,000 held, zero failures**, 470 MB RSS (~47 KB/socket); message probe through the held load ACKed 200/200 at p50 43 ms / p95 95 ms |
+| k6, 50 VUs across 10 rooms via the LB | ACK p95 **176 ms** (p50 19 ms), 100 % checks |
+| k6, 50 VUs in one hot room (50× fan-out) | p95 2.55 s — fan-out, not message rate, is the cost driver |
+| Failover, socket-owning pod killed mid-stream | 60/60 exactly once, gap-free sequences, gap ≈ 2.4 s |
 
-Getting there took three fixes, each documented in INTERVIEW-REVIEW: the
-roster was re-broadcast unbounded to every socket on every connect (O(N³)
-traffic during a ramp — now bounded to 100 entries + throttled with trailing
-coalescing); a single-process load generator starves its own event loop past
-~5 k sockets and the server's ping timeout reaps healthy connections (the
-generator now shards across 4 worker processes); and free-tier Atlas's
-~100 ops/s throttle melted under per-connect bookkeeping (the bench runs
-against a local RAM-backed mongod — scripts/benchdb.mts). Caveats stated:
-one machine, loopback, mostly-idle connections — message throughput at scale
-is the k6 table below, not this number.
-
-### Measured (k6, 50 VUs × 60 s, via the nginx LB on the 2-replica compose stack)
-
-Environment: one Windows laptop running Docker Desktop with k6, nginx, both
-backend pods, MongoDB, and Redis co-located — a worst case for latency, not
-a benchmark rig. Numbers are client-observed ACK round-trips (send → server
-persisted + ACKed), i.e. the full delivery-guarantee path.
-
-| Scenario | Sends | Fan-out | ACK p50 | ACK p95 | Checks | Verdict |
-|---|---|---|---|---|---|---|
-| **Representative** — 50 users across 10 rooms (`ROOMS=10`) ≈ the documented org-wide target | 5,700 (~59/s) | 5× (≈515 deliveries/s) | 19 ms | **176 ms** | 100 % | **p95 < 250 ms threshold met**; server-side avg ≈ 40 ms, 98 % ≤ 250 ms |
-| **Hot room** — all 50 users in one room (`ROOMS=1`) | 5,700 (~57/s) | 50× (≈2,900 deliveries/s) | 586 ms | 2.55 s | 100 % | Threshold missed — honest stress number: one Node event loop doing ~5k socket writes/s + adapter publishes; server-side avg ≈ 700 ms |
-
-Two findings from running it, both now documented as engineering facts
-rather than hidden:
-
-- **Both runs landed on a single pod.** nginx `ip_hash` pins a client IP to
-  one upstream, and a k6 container is one IP — so a single-source load test
-  against an IP-hashed LB is a one-pod test by construction (Prometheus
-  confirmed: `backend2` processed 0 messages). Real user populations spread
-  by IP; load generators don't. The per-pod ceiling above is therefore the
-  honest single-pod number, and horizontal headroom comes from IP diversity
-  — or from the shipped websocket-only `least_conn` profile
-  (`npm run stack:scale:ws`, `deploy/nginx-lb-ws.conf`), which balances by
-  live connection count at the cost of the long-polling fallback: clients
-  behind websocket-hostile proxies can't connect at all on that profile.
-- **Fan-out, not message rate, is the cost driver.** Delivery load = sends ×
-  room size. The scale assumption "≤ 500 sockets/pod, ~200 msg/s org-wide"
-  holds only with realistic room sizes; a 50-person room where everyone
-  types at once is the case that would justify the Kafka/batching milestone
-  below.
-
-**What changes at 100× (and is deliberately out of scope):** Kafka in front
-of persistence, room sharding, a presence service split out of the message
-path, S3-backed media, read replicas. Each is listed in the scaling section
-of the architecture doc with the trigger that would justify it.
+The design carried forward the fixes those runs forced (bounded/throttled
+roster broadcasts, seeded sequence counters, idempotent retries) and replaced
+the one component that made the hot-room ceiling what it was — a single
+event loop doing every socket write — with virtual-thread request handling
+and per-pod STOMP brokers fed by Redis. Re-measuring is the next step, and
+the claim until then is the design, not the number.
 
 ## The engineering signals an interviewer can check
 
-1. Delivery pipeline with five independent layers, each *tested* — including
-   an integration test that double-sends the same UUID and asserts one row.
-2. A crypto implementation pinned to RFC 7748 / RFC 8032 / RFC 5869 / NIST
-   GCM vectors, with tamper, replay, out-of-order, and rotation tests.
-3. A kill-a-pod verifier (`npm run demo:failover` against
-   `docker-compose.scale.yml`) that stops the socket-owning replica
-   mid-stream and asserts the outcome — last run: 60/60 exactly once,
-   gap-free sequences across the pod switch, one reconnect per client, one
-   in-flight retry, ~2.4 s failover gap, zero duplicates.
-4. 190+ automated tests across unit / integration / crypto KAT layers, CI
-   with a real Redis service container, k6 load script with thresholds.
+1. The guarantees are constraints: `\d messages` and `\d dm_messages` show
+   the unique indexes; `MessagingIT` double-sends and asserts one row;
+   `DirectMessageIT` replays a counter and asserts `409`.
+2. A crypto implementation pinned to RFC 7748 / 8032 / 5869 / NIST GCM
+   vectors (client) and RFC 6238 (server TOTP), with tamper, replay,
+   out-of-order and rotation tests.
+3. The transactional outbox and idempotent consumers, exercised through a
+   real broker in `KafkaConsumersIT`.
+4. A module boundary test (`ModularityTests`) that turns the architecture
+   diagram into a red or green build.
 5. ADRs where every major choice names the alternative it rejected and the
-   cost it accepted.
+   cost it accepted — including ADR-0010, the decision to replace the stack.

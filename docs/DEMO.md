@@ -4,19 +4,19 @@ Audience: senior/staff engineers. The goal is not a product tour — it's to
 surface the engineering under the UI fast, and let every step open a thread
 they can pull on. Rehearse the kill-a-pod step; it's the centerpiece.
 
-**Setup before the call:** `docker compose -f docker-compose.scale.yml up
---build` (nginx LB → 2 backend replicas → shared Mongo + Redis; app on
-:3000). Two users in two *isolated* browser contexts — easiest trick: open
-`http://localhost:3000` as user A and `http://127.0.0.1:3000` as user B in
-the same browser. They're different origins, so localStorage/IndexedDB (and
-therefore E2EE keys) are fully separate — no incognito or second profile
-needed. (`127.0.0.1` is in the dev CORS allowlist for exactly this.)
-Terminal visible. Metrics page open in a third tab.
+**Setup before the call:**
 
-> Verified end-to-end on 2026-08-22 with exactly this setup: setup gate →
-> recovery code → DM → Bob's sidebar shows "🔒 Encrypted message" until he
-> opens it → decrypts; reply decrypts live on Alice's side; safety numbers
-> identical on both; `db.dmmessages` holds only `e2ee/v1` envelopes.
+```bash
+docker compose -f docker-compose.yml -f docker-compose.scale.yml up --build --scale backend=2
+```
+
+nginx `least_conn` → 2 backend replicas → shared Postgres + Redis + Kafka; app
+on :3000, API through the LB on :8080. Two users in two *isolated* browser
+contexts — easiest trick: open `http://localhost:3000` as user A and
+`http://127.0.0.1:3000` as user B in the same browser. They're different
+origins, so localStorage/IndexedDB (and therefore E2EE keys) are fully
+separate. Terminal visible. Metrics page open in a third tab. `psql` handy:
+`docker compose exec postgres psql -U cipherchat`.
 
 ---
 
@@ -29,86 +29,111 @@ observability that never sees content." (docs/WHY-DIFFERENT.md)
 
 ### 2. Why it's hard (1 min)
 Name the two classic failure modes: lost messages and duplicated messages.
-Everything else in the demo is the machinery that makes both impossible.
+Everything else in the demo is the machinery that makes both impossible —
+and the point of the rewrite: the machinery is now **constraints and
+transactions**, not application discipline.
 
 ### 3. Architecture in one diagram (1 min)
-docs/ARCHITECTURE.md topology diagram. Point at exactly three things: sticky
-LB, Redis as the coordination plane, per-user rooms for cross-pod targeting.
+README diagram. Point at exactly three things: Postgres is truth (unique
+indexes carry the guarantees), Redis is coordination (never a source of
+truth), Kafka is "afterwards" (outbox → consumers). One deployable, module
+boundaries enforced by a test (`ModularityTests`).
 
 ### 4. Live: delivery pipeline (2 min)
 Send messages between the two browsers. Narrate the tick progression
-(◌ sending → ✓ ACKed → ✓✓ delivered → blue read) and what each transition
-proves. DevTools → Network → WS: show the `chatroomMessage` frame carrying
-`clientMessageId` and the ACK carrying `sequenceNumber`.
+(◌ sending → ✓ ACKed → ✓✓ delivered → blue read). DevTools → Network → WS:
+show the STOMP `SEND /app/rooms/send` frame carrying `clientMessageId` and
+the ACK on `/user/queue/acks` carrying `sequenceNumber`. Then in psql:
+
+```sql
+\d messages            -- point at the two unique indexes
+select id, sequence_number, client_message_id from messages order by id desc limit 5;
+```
+
+"If Redis lied about the sequence, this index refuses the row. The ACK is a
+promise the database keeps."
 
 ### 5. Live: kill a pod (2 min) — centerpiece
-**Stop the pod that owns the sockets.** nginx `ip_hash` routes by client IP,
-and from one laptop every browser shares an IP — so hard-coding `backend1`
-usually kills the *other* replica and proves only shared state, not socket
-failover. `curl localhost:8080/health` returns `pod` = the socket owner.
+```bash
+docker compose ps                                # find the replica holding the sockets (backend logs show CONNECT)
+docker compose kill cipherchat-backend-1         # while one browser is typing
+```
+Clients reconnect to the survivor through the LB within seconds, the offline
+queue drains through `/app/rooms/sync`, dedup absorbs the retries — zero
+lost, zero duplicated. Show `docker compose logs -f lb` and the reconnect in
+the console. Restart the pod; its next message gets the right sequence
+(counter seeded from `max(sequence_number)`, never reset to 1).
 
-Two ways to run it:
-- **Automated (do this first, it's the proof):** `cd chat-back && npm run
-  demo:failover` — registers two users, streams 60 messages, stops the
-  socket-owning pod at #30, and asserts exactly-once persistence, gap-free
-  sequences, and exactly-once receipt on the other client. Expect
-  `reconnects alice=1 bob=1`, a few `retried sends` absorbed by dedup, PASS.
-- **Visual:** `docker compose -f docker-compose.scale.yml stop <that pod>`
-  while one browser types. The clients reconnect to the survivor (via the
-  LB), the offline queue drains, dedup absorbs the retries — zero lost, zero
-  duplicated. Show `docker compose ps` and the reconnect in the console.
-  Restart the pod and show it rejoining with correct sequence numbers
-  (seeded from Mongo, not reset to 1).
-
-Talking point: the first run of the verifier *found two real bugs* — the
-graceful shutdown hung on proxy keep-alives, and a client must explicitly
-reconnect after a server-initiated disconnect. Both fixed; both are in
-INTERVIEW-REVIEW.md. "The demo is also a test" is the SDE-3 line.
+Talking point: no sticky sessions anywhere. "The socket is pinned by TCP,
+not by the LB; everything *about* the session lives in Redis or Postgres."
 
 ### 6. Live: offline queue (1 min)
 DevTools → Network → Offline. Send three messages (⏳ queued badge). Back
 online → they drain in order, exactly once. Application tab → IndexedDB →
-show the queue emptying.
+show the queue emptying. Then send the same message twice with the same
+`clientMessageId` from the console — the second ACK says `duplicate: true`.
 
 ### 7. Live: E2EE (2 min)
 DM between the two users. Show: the WS frame carries only
-`{v, sessionId, ctr, ct}`; `mongosh` → `db.dmmessages.findOne()` shows
-ciphertext at rest ("this is what the DB admin sees"). Safety-number modal:
-same 60 digits in both browsers. One sentence on the protocol: "X3DH-lite
-handshake, per-direction HMAC chains, GCM with routing-bound AAD, session
-rotation every 200 messages — ADR-0003 has the Double-Ratchet and libsignal
-rejection rationale."
+`{v, sessionId, ctr, ct}`. In psql:
 
-### 8. Rooms vs DMs trade-off (30 s)
+```sql
+select type, body, envelope from dm_messages order by id desc limit 1;
+```
+
+"This is what the DB admin sees." Safety-number modal: same 60 digits in
+both browsers. Then the server's *only* cryptographic duties: `\d dm_messages`
+→ the `(conversation, sender, sessionId, ctr)` unique index — "a counter is
+spent once, cluster-wide, even with a hostile client"; `PUT /api/v1/keys`
+verifies the Ed25519 prekey signature so the directory can't serve a
+mix-and-match bundle. One sentence on the protocol: "X3DH-lite handshake,
+per-direction HMAC chains, GCM with routing-bound AAD, session rotation every
+200 messages — ADR-0003 has the Double-Ratchet and libsignal rejection
+rationale."
+
+### 8. Live: the afterwards pipeline (1 min)
+@mention the other user in a room. Their toast is instant (Redis fan-out);
+then `GET /api/v1/notifications` shows the durable inbox row that came
+**through Kafka**. In psql: `select * from event_publication order by
+publication_date desc limit 3;` (the outbox) and `select * from
+processed_events;` (the idempotency ledger). "Stop Kafka, send a message —
+it still ACKs; the publication waits in Postgres and replays when the broker
+is back."
+
+### 9. Rooms vs DMs trade-off (30 s)
 Open a room, hit AI summarize. "Rooms are server-readable on purpose — you
 can't summarize what you can't read. Two privacy tiers, honestly labeled."
-(ADR-0004)
+(ADR-0004) Mention the circuit breaker: kill the API key → three endpoints
+return a fast 503, nothing else notices.
 
-### 9. Authorization + unread (1 min)
-Create a private room; show the other user can't see it, invite them, show
-role management and the owner-transfer rule. Dashboard unread badges — one
-watermark row per (user, room), badge = indexed range-count.
+### 10. Authorization + unread (1 min)
+Create a private room; show the other user can't see it (403 with a stable
+`code`), invite them, show role management and the owner-transfer rule.
+Dashboard unread badges — one watermark row per (user, room), badge = indexed
+range-count.
 
-### 10. Observability (1 min)
+### 11. Observability (1 min)
 Metrics page: p50/p95/p99, delivery rate, live concurrency. `curl
-localhost:8080/metrics | grep cipherchat` for the Prometheus view. "Every
-metric passes one test: could this line reveal what someone said? Counts,
-latencies, outcomes only."
+localhost:8080/actuator/prometheus | grep cipherchat_` for the Prometheus
+view; `curl -H 'X-Request-Id: demo-1' …` and grep the JSON log line for it.
+"Every metric passes one test: could this line reveal what someone said?"
 
-### 11. Tests + CI (1 min)
-`npx vitest run` in chat-back (unit + socket integration on
-mongodb-memory-server; the dedup test literally double-sends a UUID). Point
-at the crypto KAT file: RFC 7748/8032/5869 + NIST GCM vectors. CI runs the
-Redis suite against a real Redis service container. k6 script with the
-p95<250ms threshold.
+### 12. Tests + CI (1 min)
+`./mvnw verify` — Testcontainers start real Postgres/Redis/Kafka; point at
+`MessagingIT` (double-send → one row, gapless sequences), `DirectMessageIT`
+(replayed counter → 409), `KafkaConsumersIT` (mention → inbox row exactly
+once), `StompGatewayIT` (ACK + broadcast over a real socket), and
+`ModularityTests` (module boundaries). Client crypto is pinned to RFC/NIST
+vectors; server TOTP to RFC 6238. CI: Spotless → unit → ITs → JaCoCo → Trivy
+→ images → gated deploy.
 
-### 12. Trade-offs I'd defend (1 min)
-Pick three: session-granular forward secrecy (vs a subtly-wrong Double
-Ratchet), Redis as a single coordination point (vs premature Kafka), access
-token in localStorage for 15 minutes (vs breaking the socket handshake).
-Each has an ADR with the alternative it rejected.
+### 13. Trade-offs I'd defend (1 min)
+Pick three: modular monolith over microservices at this envelope; Redis
+pub/sub (lossy, resync by sequence) for live fan-out instead of Kafka;
+session-granular forward secrecy over a subtly-wrong Double Ratchet. Each has
+an ADR with the alternative it rejected (ADR-0010, 0007, 0003).
 
-### 13–14. Open threads for Q&A
-Scaling milestones table (what changes at 100× and what triggers it), the
-weak-points list in docs/INTERVIEW-REVIEW.md — offering your own known
-limitations before being asked is the strongest signal in the room.
+### 14. Open threads for Q&A
+`SYSTEM_DESIGN.md` §10 (what changes at 10×), the weak-points list in
+`INTERVIEW-REVIEW.md` — offering your own known limitations before being
+asked is the strongest signal in the room.
