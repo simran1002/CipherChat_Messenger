@@ -9,7 +9,7 @@ COPY .mvn .mvn
 RUN --mount=type=cache,target=/root/.m2 ./mvnw -q -B dependency:go-offline
 COPY src src
 RUN --mount=type=cache,target=/root/.m2 ./mvnw -q -B -DskipTests package \
- && java -Djarmode=tools -jar target/*.jar extract --layers --destination extracted
+ && java -Djarmode=tools -jar target/*.jar extract --layers --launcher --destination extracted
 
 # ── Stage 2: runtime ────────────────────────────────────────────────────────
 # JRE only, non-root, layered jar (dependencies / spring-boot-loader /
