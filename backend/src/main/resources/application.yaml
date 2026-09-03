@@ -1,0 +1,200 @@
+# CipherChat backend — base configuration.
+# Every secret and every environment-specific value comes from the
+# environment; the defaults below only ever point at the local Compose stack.
+# Profiles: dev (default, local Compose), test (Testcontainers), prod.
+
+spring:
+  application:
+    name: cipherchat
+  threads:
+    virtual:
+      enabled: true            # Java 21: one virtual thread per request/consumer — cheap blocking I/O
+
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/cipherchat}
+    username: ${DATABASE_USER:cipherchat}
+    password: ${DATABASE_PASSWORD:cipherchat}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:20}   # sized per pod; RDS max_connections / pods
+      minimum-idle: 5
+      connection-timeout: 5000
+      max-lifetime: 1800000
+      pool-name: cipherchat-hikari
+  jpa:
+    open-in-view: false        # never hold a connection across view rendering
+    hibernate:
+      ddl-auto: validate       # Flyway owns the schema; Hibernate only checks it
+    properties:
+      hibernate:
+        jdbc.time_zone: UTC
+        jdbc.batch_size: 50
+        order_inserts: true
+        order_updates: true
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  data:
+    redis:
+      url: ${REDIS_URL:redis://localhost:6379}
+      timeout: 2s
+      lettuce:
+        pool:
+          max-active: 32
+
+  servlet:
+    multipart:
+      max-file-size: 11MB            # 10 MB plaintext + GCM tag/slack for encrypted blobs
+      max-request-size: 12MB
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      acks: all                # leader + ISR ack before we call a message "sent"
+      retries: 5
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+        delivery.timeout.ms: 30000
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer   # Jackson 3 (Boot 4 default)
+    consumer:
+      group-id: cipherchat
+      auto-offset-reset: earliest
+      enable-auto-commit: false      # offsets are committed after the handler succeeds
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      # ErrorHandlingDeserializer: a poison record becomes a handled exception (→ DLT), not a stuck partition
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
+        spring.json.trusted.packages: com.cipherchat.*
+    listener:
+      ack-mode: record
+
+  modulith:
+    events:
+      jdbc:
+        schema-initialization:
+          enabled: true        # event_publication = the transactional outbox
+      republish-outstanding-events-on-restart: true
+      completion-mode: delete
+
+server:
+  port: ${PORT:8080}
+  forward-headers-strategy: native   # behind nginx / ALB: honour X-Forwarded-*
+  shutdown: graceful
+  error:
+    include-message: always
+    include-stacktrace: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true          # /actuator/health/liveness + /readiness for Kubernetes
+  metrics:
+    tags:
+      application: cipherchat
+      pod: ${HOSTNAME:local}
+  tracing:
+    sampling:
+      probability: 0.1
+
+cipherchat:
+  security:
+    # HS256 signing key — MUST be overridden; >= 32 bytes. Startup fails on the default outside dev/test.
+    jwt-secret: ${JWT_SECRET:dev-only-secret-change-me-please-32-chars!!}
+    access-token-ttl: 15m
+    refresh-token-ttl: 30d
+    two-factor-pending-ttl: 5m
+    # Key for sealing TOTP seeds at rest (AES-256-GCM). Separate from the JWT key.
+    seal-secret: ${SEAL_SECRET:dev-only-seal-secret-change-me-please-32-chars!!}
+    cookie-secure: ${COOKIE_SECURE:false}
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173}
+  rate-limit:
+    auth-per-15m: 100
+    refresh-per-15m: 30
+    two-factor-per-5m: 10
+    messages-burst: 20
+    messages-refill-per-second: 2
+  presence:
+    ttl: 90s                   # heartbeat every 30s; three misses = offline
+    roster-cap: 100
+  kafka:
+    partitions: ${KAFKA_PARTITIONS:6}          # consumer-parallelism ceiling per topic
+    consumer-concurrency: ${KAFKA_CONSUMER_CONCURRENCY:3}
+    topics:
+      message-events: message-events
+      presence-events: presence-events
+      notification-events: notification-events
+      audit-events: audit-events
+  storage:
+    driver: ${STORAGE_DRIVER:local}            # local | s3
+    max-file-bytes: 10485760                    # 10 MB plaintext cap (room attachments)
+    local:
+      dir: ${UPLOAD_DIR:./data/uploads}
+      public-base-url: ${PUBLIC_BASE_URL:http://localhost:8080}
+    s3:
+      bucket: ${S3_BUCKET:}
+      region: ${AWS_REGION:us-east-1}
+      endpoint: ${S3_ENDPOINT:}                 # set for MinIO / LocalStack; blank = AWS
+      public-base-url: ${S3_PUBLIC_BASE_URL:}   # CDN / bucket website origin; blank = virtual-hosted S3 URL
+      presign-ttl: 5m
+  ai:
+    api-key: ${ANTHROPIC_API_KEY:}
+    base-url: ${AI_BASE_URL:https://api.anthropic.com}   # self-hosters point this at an in-org gateway
+    model: claude-haiku-4-5-20251001
+    requests-per-minute: 20
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      anthropic:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 2
+        register-health-indicator: true
+  retry:
+    instances:
+      anthropic:
+        max-attempts: 2
+        wait-duration: 500ms
+        retry-exceptions:
+          - org.springframework.web.client.ResourceAccessException
+          - org.springframework.web.client.HttpServerErrorException
+      partitions: ${KAFKA_PARTITIONS:6}
+      replication: ${KAFKA_REPLICATION:1}
+
+logging:
+  structured:
+    format:
+      console: ${LOG_FORMAT:}   # set to "ecs" or "logstash" in prod for JSON logs
+  level:
+    root: INFO
+    com.cipherchat: ${LOG_LEVEL:INFO}
+    org.apache.kafka: WARN
+
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+logging:
+  structured:
+    format:
+      console: ecs
+management:
+  endpoint:
+    health:
+      show-details: never
+cipherchat:
+  security:
+    cookie-secure: true

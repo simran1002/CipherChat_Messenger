@@ -1,0 +1,9 @@
+target/
+data/
+*.log
+.env
+.env.*
+.idea/
+*.iml
+.vscode/
+.factorypath
