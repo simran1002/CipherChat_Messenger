@@ -135,7 +135,7 @@ jobs:
       - name: Kubernetes manifests against the 1.30 schemas
         run: |
           docker run --rm -v "$PWD/infrastructure/kubernetes:/k" ghcr.io/yannh/kubeconform:v0.7.0 \
-            -strict -summary -kubernetes-version 1.30 -ignore-missing-schemas /k
+            -strict -summary -kubernetes-version 1.30.0 -ignore-missing-schemas /k
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.9.8"

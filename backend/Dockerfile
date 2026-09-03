@@ -21,7 +21,9 @@ RUN --mount=type=cache,target=/root/.m2 \
 # JRE only, non-root, layered jar (dependencies / spring-boot-loader /
 # snapshot-dependencies / application) so a redeploy pushes only the app layer.
 FROM eclipse-temurin:21-jre-alpine AS runtime
-RUN addgroup -S cipherchat && adduser -S -G cipherchat cipherchat \
+# apk upgrade pulls OS security fixes published after the base image was built (OpenSSL et al.).
+RUN apk upgrade --no-cache \
+ && addgroup -S cipherchat && adduser -S -G cipherchat cipherchat \
  && apk add --no-cache curl \
  && mkdir -p /data/uploads && chown -R cipherchat:cipherchat /data
 WORKDIR /app

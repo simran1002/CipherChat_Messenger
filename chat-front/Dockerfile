@@ -11,6 +11,8 @@ RUN npm run build
 
 # ── Runtime: static files behind nginx ────────────────────────────────────────
 FROM nginx:1.31-alpine AS runtime
+# apk upgrade pulls OS security fixes published after the base image was built.
+RUN apk upgrade --no-cache
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80
