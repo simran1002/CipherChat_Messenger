@@ -92,8 +92,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Trivy filesystem scan (Maven + npm lockfiles)
-        uses: aquasecurity/trivy-action@v0.33.1
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
+          version: v0.74.0          # pinned: the installer no longer serves the action's older default
           scan-type: fs
           scan-ref: .
           severity: CRITICAL,HIGH
@@ -133,8 +134,9 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,scope=${{ matrix.name }},mode=max
       - name: Image vulnerability scan
-        uses: aquasecurity/trivy-action@v0.33.1
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
+          version: v0.74.0
           image-ref: ${{ matrix.image }}:${{ github.sha }}
           severity: CRITICAL,HIGH
           ignore-unfixed: true
