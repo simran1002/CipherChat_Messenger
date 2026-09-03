@@ -28,7 +28,7 @@
     "qrcode": "^1.5.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-router-dom": "^6.30.6",
+    "react-router-dom": "^7.18.3",
     "recharts": "^3.10.1",
     "sweetalert2": "^9.10.12"
   },
