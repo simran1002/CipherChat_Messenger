@@ -2,7 +2,7 @@
 # ── Stage 1: build ──────────────────────────────────────────────────────────
 # Dependencies are resolved in their own layer so a source-only change does
 # not re-download the world. Tests run in CI, not in the image build.
-FROM eclipse-temurin:21-jdk-alpine AS build
+FROM eclipse-temurin:25-jdk-alpine AS build
 WORKDIR /workspace
 COPY mvnw pom.xml ./
 RUN chmod +x mvnw
@@ -20,7 +20,7 @@ RUN --mount=type=cache,target=/root/.m2 \
 # ── Stage 2: runtime ────────────────────────────────────────────────────────
 # JRE only, non-root, layered jar (dependencies / spring-boot-loader /
 # snapshot-dependencies / application) so a redeploy pushes only the app layer.
-FROM eclipse-temurin:21-jre-alpine AS runtime
+FROM eclipse-temurin:25-jre-alpine AS runtime
 # apk upgrade pulls OS security fixes published after the base image was built (OpenSSL et al.).
 RUN apk upgrade --no-cache \
  && addgroup -S cipherchat && adduser -S -G cipherchat cipherchat \
