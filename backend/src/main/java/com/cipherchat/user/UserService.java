@@ -73,6 +73,14 @@ public class UserService {
                 .collect(Collectors.toMap(User::getId, UserView.Summary::of, (a, b) -> a));
     }
 
+    /** Full views in one query — for member lists, where email and online state are shown. */
+    @Transactional(readOnly = true)
+    public Map<UUID, UserView> views(Collection<UUID> ids) {
+        if (ids.isEmpty()) return Map.of();
+        return users.findAllByIdIn(ids).stream()
+                .collect(Collectors.toMap(User::getId, UserView::of, (a, b) -> a));
+    }
+
     @Transactional(readOnly = true)
     public List<UserView> directoryExcluding(UUID callerId) {
         return users.findAllByIdNotOrderByNameAsc(callerId).stream().map(UserView::of).toList();

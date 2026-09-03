@@ -113,6 +113,12 @@ public class AuthController {
 
     // ── Two-factor ───────────────────────────────────────────────────────────
 
+    @GetMapping("/2fa/status")
+    @Operation(summary = "Whether the caller has two-factor authentication enabled")
+    public java.util.Map<String, Boolean> twoFactorStatus() {
+        return java.util.Map.of("enabled", twoFactor.isEnabled(CurrentUser.id()));
+    }
+
     @PostMapping("/2fa/setup")
     @Operation(summary = "Start TOTP enrollment — returns the otpauth URI for the QR code")
     public TwoFactorSetupResponse setupTwoFactor() {

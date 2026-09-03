@@ -27,7 +27,9 @@ public final class ChatroomDtos {
             boolean isPrivate) {
     }
 
-    public record ReplyRef(@NotNull Long messageId, @Size(max = 200) String preview, @Size(max = 50) String senderName) {
+    /** {@code messageId} is serialised as a string like every other id on the wire (accepts either on input). */
+    public record ReplyRef(@NotNull @com.fasterxml.jackson.annotation.JsonFormat(shape = com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING) Long messageId,
+                           @Size(max = 200) String preview, @Size(max = 50) String senderName) {
     }
 
     public record SendMessageRequest(
@@ -77,7 +79,7 @@ public final class ChatroomDtos {
     public record RoomSummary(String id, String name, boolean isPrivate) {
     }
 
-    public record MemberView(UserView.Summary user, ChatroomMember.Role role, Instant joinedAt) {
+    public record MemberView(UserView.Summary user, String email, boolean isOnline, ChatroomMember.Role role, Instant joinedAt) {
     }
 
     public record MembersView(List<MemberView> members, boolean isPrivate, ChatroomMember.Role myRole) {

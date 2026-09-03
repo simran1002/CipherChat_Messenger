@@ -116,10 +116,14 @@ public class ChatroomService {
     public MembersView members(UUID roomId, UUID callerId) {
         Chatroom room = assertAccess(roomId, callerId);
         List<ChatroomMember> rows = members.findAllByKeyChatroomId(roomId);
-        Map<UUID, UserView.Summary> people = users.summaries(rows.stream().map(ChatroomMember::getUserId).toList());
+        Map<UUID, UserView> people = users.views(rows.stream().map(ChatroomMember::getUserId).toList());
         List<MemberView> views = rows.stream()
-                .map(m -> new MemberView(people.get(m.getUserId()), m.getRole(), m.getJoinedAt()))
-                .filter(v -> v.user() != null)
+                .filter(m -> people.containsKey(m.getUserId()))
+                .map(m -> {
+                    UserView u = people.get(m.getUserId());
+                    return new MemberView(new UserView.Summary(u.id(), u.name(), u.dp()), u.email(), u.isOnline(),
+                            m.getRole(), m.getJoinedAt());
+                })
                 .toList();
         return new MembersView(views, room.isPrivateRoom(), roleOf(roomId, callerId).orElse(null));
     }
