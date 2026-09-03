@@ -153,7 +153,7 @@ jobs:
       - name: Checksums for every asset
         working-directory: dist
         run: sha256sum * > SHA256SUMS.txt
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           name: CipherChat ${{ needs.version.outputs.version }}
           generate_release_notes: true
