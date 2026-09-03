@@ -53,7 +53,7 @@ class E2EEService {
       const local = await keyStore.loadIdentity();
       if (local) {
         // Detect a reset made from another browser: server identity differs
-        const server = await api.get<{ keys: { identityEd25519: string } | null }>("/keys/me");
+        const server = await api.get<{ keys: { identityEd25519: string } | null }>("/api/v1/keys/me");
         if (server.data.keys && server.data.keys.identityEd25519 !== local.edPub) {
           this.status = { state: "needs-restore-or-reset" };
           return this.status;
@@ -67,7 +67,7 @@ class E2EEService {
         return this.status;
       }
 
-      const server = await api.get<{ keys: unknown | null }>("/keys/me");
+      const server = await api.get<{ keys: unknown | null }>("/api/v1/keys/me");
       this.status = server.data.keys ? { state: "needs-restore-or-reset" } : { state: "needs-setup" };
       return this.status;
     } catch (err) {
@@ -232,8 +232,10 @@ class E2EEService {
   private myUserId(): string {
     const token = localStorage.getItem("CC_Token");
     if (!token) throw new Error("Not authenticated");
-    const payload = JSON.parse(atob(token.split(".")[1]!)) as { id: string };
-    return payload.id;
+    // The Java backend's access token carries the user id in the standard
+    // `sub` claim (JwtService.issueAccessToken), not a custom `id` claim.
+    const payload = JSON.parse(atob(token.split(".")[1]!)) as { sub: string };
+    return payload.sub;
   }
 
   private async activeSession(conversationId: string): Promise<StoredSession | null> {
@@ -248,7 +250,7 @@ class E2EEService {
 
   /** Fetch a peer bundle, TOFU-pin the identity, flag changes. */
   private async fetchAndPinBundle(peerId: string): Promise<PeerBundle> {
-    const res = await api.get<{ keys: PeerBundle & { keyVersion: number } }>(`/keys/${peerId}`);
+    const res = await api.get<{ keys: PeerBundle & { keyVersion: number } }>(`/api/v1/keys/${peerId}`);
     const bundle = res.data.keys;
     await this.checkPeerIdentity(peerId, undefined, bundle.identityEd25519, bundle.keyVersion);
     return bundle;
@@ -267,7 +269,7 @@ class E2EEService {
     let ed = directoryEd25519;
     if (!ed) {
       const res = await api.get<{ keys: { identityEd25519: string; identityX25519: string; keyVersion: number } }>(
-        `/keys/${peerId}`
+        `/api/v1/keys/${peerId}`
       );
       ed = res.data.keys.identityEd25519;
       keyVersion = res.data.keys.keyVersion;

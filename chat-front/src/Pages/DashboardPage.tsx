@@ -13,16 +13,41 @@ import {
   LockClosedIcon,
 } from "@heroicons/react/24/outline";
 import { makeToast } from "../utils/toast";
-import api from "../services/api";
+import api, { apiErrorMessage } from "../services/api";
 import type { Chatroom } from "../types";
 
-/** GET /chatroom rows now carry membership + unread info (Phase 4). */
+/** GET /api/v1/chatrooms rows carry membership + unread info (Phase 4). */
 type DashboardRoom = Chatroom & {
   memberCount?: number;
   myRole?: "owner" | "admin" | "member" | null;
   unreadCount?: number;
   isPrivate?: boolean;
 };
+
+/** Raw row shape (ChatroomDtos.RoomView) — `id` on the wire, not `_id`. */
+interface RawRoomView {
+  id: string;
+  name: string;
+  isPrivate: boolean;
+  createdBy?: string | null;
+  createdByName?: string | null;
+  memberCount: number;
+  myRole: "owner" | "admin" | "member" | null;
+  unreadCount: number;
+  createdAt: string;
+}
+
+const mapRawRoom = (r: RawRoomView): DashboardRoom => ({
+  _id: r.id,
+  name: r.name,
+  isPrivate: r.isPrivate,
+  createdBy: r.createdBy,
+  createdByName: r.createdByName,
+  memberCount: r.memberCount,
+  myRole: r.myRole,
+  unreadCount: r.unreadCount,
+  createdAt: r.createdAt,
+});
 
 const DashboardPage = () => {
   const { socket } = useSocket();
@@ -36,8 +61,8 @@ const DashboardPage = () => {
 
   const getChatrooms = useCallback(async () => {
     try {
-      const response = await api.get("/chatroom");
-      setChatrooms(response.data as DashboardRoom[]);
+      const response = await api.get("/api/v1/chatrooms");
+      setChatrooms((response.data as RawRoomView[]).map(mapRawRoom));
     } catch (err) {
       console.error("Error fetching chatrooms:", err);
       makeToast("error", "Failed to load chatrooms");
@@ -76,19 +101,17 @@ const DashboardPage = () => {
 
     setIsCreating(true);
     try {
-      const response = await api.post("/chatroom", {
+      await api.post("/api/v1/chatrooms", {
         name: newChatroomName.trim(),
         isPrivate: newRoomPrivate,
       });
-      makeToast("success", (response.data as { message: string }).message);
+      makeToast("success", `"${newChatroomName.trim()}" created`);
       setNewChatroomName("");
       setNewRoomPrivate(false);
       setShowCreateForm(false);
       void getChatrooms();
     } catch (err) {
-      const message = (err as { response?: { data?: { message?: string } } })?.response?.data
-        ?.message;
-      makeToast("error", message || "Failed to create chatroom");
+      makeToast("error", apiErrorMessage(err, "Failed to create chatroom"));
     } finally {
       setIsCreating(false);
     }
@@ -342,10 +365,10 @@ const DashboardPage = () => {
                           <span>{chatroom.memberCount}</span>
                         </div>
                       )}
-                      {chatroom.createdBy && (
+                      {chatroom.createdByName && (
                         <div className="flex items-center space-x-1">
                           <UserCircleIcon className="w-4 h-4" />
-                          <span>{chatroom.createdBy.name || "Unknown"}</span>
+                          <span>{chatroom.createdByName}</span>
                         </div>
                       )}
                       {chatroom.createdAt && (

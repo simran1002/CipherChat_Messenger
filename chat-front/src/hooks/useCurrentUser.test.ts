@@ -11,13 +11,13 @@ afterEach(() => {
 });
 
 describe("getCurrentUserId", () => {
-  it("returns the id from a valid JWT payload", () => {
-    localStorage.setItem("CC_Token", makeToken({ id: "user-42", iat: 1700000000 }));
+  it("returns the id from the JWT's standard `sub` claim", () => {
+    localStorage.setItem("CC_Token", makeToken({ sub: "user-42", iat: 1700000000 }));
     expect(getCurrentUserId()).toBe("user-42");
   });
 
-  it("returns null when the payload has no id", () => {
-    localStorage.setItem("CC_Token", makeToken({ sub: "someone-else" }));
+  it("returns null when the payload has no sub", () => {
+    localStorage.setItem("CC_Token", makeToken({ id: "someone-else" }));
     expect(getCurrentUserId()).toBeNull();
   });
 

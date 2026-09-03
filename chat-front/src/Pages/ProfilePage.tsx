@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, type ChangeEvent } from "reac
 import { motion } from "framer-motion";
 import { CameraIcon, CheckIcon, PencilIcon, ComputerDesktopIcon, XMarkIcon } from "@heroicons/react/24/outline";
 import { LockClosedIcon } from "@heroicons/react/24/solid";
-import api, { getApiUrl } from "../services/api";
+import api, { apiErrorMessage, getApiUrl } from "../services/api";
 import { makeToast } from "../utils/toast";
 import { stringToColor, getInitials } from "../utils/helpers";
 import TwoFactorSettings from "../components/TwoFactorSettings";
@@ -32,8 +32,8 @@ function ActiveSessions() {
 
   const load = useCallback(async () => {
     try {
-      const res = await api.get("/user/sessions");
-      setSessions((res.data as { sessions: SessionRow[] }).sessions);
+      const res = await api.get("/api/v1/auth/sessions");
+      setSessions(res.data as SessionRow[]);
     } catch {
       setSessions([]);
     }
@@ -46,7 +46,7 @@ function ActiveSessions() {
   const revoke = async (id: string) => {
     setBusy(id);
     try {
-      await api.delete(`/user/sessions/${id}`);
+      await api.delete(`/api/v1/auth/sessions/${id}`);
       makeToast("success", "Session signed out");
       await load();
     } catch {
@@ -59,7 +59,7 @@ function ActiveSessions() {
   const revokeOthers = async () => {
     setBusy("others");
     try {
-      const res = await api.delete("/user/sessions");
+      const res = await api.delete("/api/v1/auth/sessions");
       makeToast("success", (res.data as { message?: string }).message || "Signed out elsewhere");
       await load();
     } catch {
@@ -141,11 +141,16 @@ const ProfilePage = ({ setUser }: ProfilePageProps) => {
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    api.get("/user/profile").then((r) => {
+    api.get("/api/v1/users/me").then((r) => {
       const data = r.data as AuthUser;
       setProfile(data);
       setName(data.name);
       setBio(data.bio || "");
+      // 2FA state lives with auth, not the profile — one extra call keeps the card truthful on load.
+      return api
+        .get<{ enabled: boolean }>("/api/v1/auth/2fa/status")
+        .then((s) => setProfile({ ...data, twoFactorEnabled: s.data.enabled }))
+        .catch(() => {});
     });
   }, []);
 
@@ -159,12 +164,20 @@ const ProfilePage = ({ setUser }: ProfilePageProps) => {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const fd = new FormData();
-      fd.append("name", name);
-      fd.append("bio", bio);
-      if (dpFile) fd.append("dp", dpFile);
-      const res = await api.put("/user/profile", fd, { headers: { "Content-Type": "multipart/form-data" } });
-      const updated = res.data.user as AuthUser;
+      // The Java backend splits this into two calls: upload the file to get a
+      // durable URL (POST /api/v1/uploads), then PATCH the profile fields —
+      // there's no single multipart "profile + avatar" endpoint any more.
+      let dp: string | undefined;
+      if (dpFile) {
+        const fd = new FormData();
+        fd.append("file", dpFile);
+        const uploaded = await api.post<{ url: string }>("/api/v1/uploads", fd, {
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+        dp = uploaded.data.url;
+      }
+      const res = await api.patch<AuthUser>("/api/v1/users/me", { name, bio, ...(dp ? { dp } : {}) });
+      const updated = res.data;
       setProfile(updated);
       setUser(updated);
       localStorage.setItem("CC_User", JSON.stringify(updated));
@@ -173,9 +186,7 @@ const ProfilePage = ({ setUser }: ProfilePageProps) => {
       setPreview(null);
       makeToast("success", "Profile updated");
     } catch (err) {
-      const message = (err as { response?: { data?: { message?: string } } })?.response?.data
-        ?.message;
-      makeToast("error", message || "Failed to update");
+      makeToast("error", apiErrorMessage(err, "Failed to update"));
     } finally {
       setSaving(false);
     }

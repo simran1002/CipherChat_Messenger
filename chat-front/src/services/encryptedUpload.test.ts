@@ -31,7 +31,7 @@ describe("uploadEncryptedBlob", () => {
 
     expect(url).toBe("https://cdn.example.com/uploads/1-2.bin");
     expect(mockedPost).toHaveBeenCalledTimes(1);
-    expect(mockedPost).toHaveBeenCalledWith("/upload/encrypted/presign", { size: blob.size });
+    expect(mockedPost).toHaveBeenCalledWith("/api/v1/uploads/encrypted/presign", { size: blob.size });
     expect(fetchMock).toHaveBeenCalledWith(
       "https://bucket.example/uploads/1-2.bin?sig=x",
       expect.objectContaining({
@@ -55,7 +55,7 @@ describe("uploadEncryptedBlob", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mockedPost).toHaveBeenCalledTimes(2);
     const [path, body] = mockedPost.mock.calls[1];
-    expect(path).toBe("/upload/encrypted");
+    expect(path).toBe("/api/v1/uploads/encrypted");
     expect(body).toBeInstanceOf(FormData);
   });
 
@@ -70,7 +70,7 @@ describe("uploadEncryptedBlob", () => {
     const url = await uploadEncryptedBlob(blob);
 
     expect(url).toBe("/uploads/5-6.bin");
-    expect(mockedPost).toHaveBeenLastCalledWith("/upload/encrypted", expect.any(FormData));
+    expect(mockedPost).toHaveBeenLastCalledWith("/api/v1/uploads/encrypted", expect.any(FormData));
   });
 
   it("surfaces the error when both paths fail", async () => {

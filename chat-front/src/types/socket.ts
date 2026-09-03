@@ -1,13 +1,16 @@
-import type { Socket } from "socket.io-client";
+import type { AppSocket as StompAppSocket } from "../services/stompSocket";
 
 /**
- * Mirrors chat-back/src/sockets/events.ts — keep the two files in sync.
- * (Server and client maps are swapped: what the server receives, the
- * client emits.)
+ * Mirrors backend/src/main/java/com/cipherchat/gateway/WsPayloads.java and
+ * the STOMP destinations wired up in StompController/PresenceGateway — keep
+ * the two in sync. Transport is `../services/stompSocket.ts` (STOMP over a
+ * raw WebSocket at /ws); this file only carries the payload/event shapes the
+ * pages and hooks were already written against.
  */
 
 export interface ReplyToRef {
-  messageId: string;
+  /** Numeric on the wire (backend `ReplyRef.messageId` is a Long) — accept either. */
+  messageId: string | number;
   preview?: string;
   senderName?: string;
 }
@@ -51,8 +54,9 @@ export interface ReactionEntry {
   name?: string;
 }
 
+/** Flat sender fields (ChatroomDtos.MessageView) — no nested `user` object. */
 export interface NewMessagePayload {
-  _id: string;
+  id: string;
   mentions?: string[];
   deliveredTo?: string[];
   type: string;
@@ -123,7 +127,7 @@ export interface DmMessageAck {
 
 export interface NewDirectMessagePayload {
   conversationId: string;
-  _id: string;
+  id: string;
   type: "e2ee/v1" | "plaintext-legacy";
   message?: string;
   envelope?: DmEnvelope;
@@ -185,10 +189,18 @@ export interface ServerToClientEvents {
   userTyping: (p: { userId: string; name: string; chatroomId: string }) => void;
   userStopTyping: (p: { userId: string; chatroomId: string }) => void;
   newDirectMessage: (p: NewDirectMessagePayload) => void;
-  dmNotification: (p: { conversationId: string; from: string; message: string }) => void;
+  /** Content-free notification; `message` is a placeholder ("🔒 Encrypted message") when `encrypted`. */
+  dmNotification: (p: {
+    conversationId: string;
+    messageId: string;
+    from: string;
+    fromId: string;
+    encrypted: boolean;
+    message: string;
+  }) => void;
   mentionNotification: (p: {
     chatroomId: string;
-    chatroomName: string;
+    chatroomName?: string;
     messageId: string;
     from: string;
     preview: string;
@@ -198,4 +210,8 @@ export interface ServerToClientEvents {
   syncOfflineQueueResult: (p: { results: SyncResultItem[] }) => void;
 }
 
-export type AppSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
+// Type-only re-export: the runtime socket is the STOMP shim in
+// services/stompSocket.ts. Importing it as a type here (rather than the old
+// socket.io-client Socket<>) avoids a runtime import cycle while keeping the
+// same `AppSocket` name every page already imports from "../types".
+export type AppSocket = StompAppSocket;

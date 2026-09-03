@@ -58,13 +58,14 @@ const Header = ({ user, onLogout }: HeaderProps) => {
       ]);
     };
     // @mention in a chatroom — same panel, with room context + browser notification
-    const handleMentionNotif = ({ chatroomId, chatroomName, from, preview }: { chatroomId: string; chatroomName: string; messageId: string; from: string; preview: string }) => {
+    const handleMentionNotif = ({ chatroomId, chatroomName, from, preview }: { chatroomId: string; chatroomName?: string; messageId: string; from: string; preview: string }) => {
+      const room = chatroomName || "a room";
       setNotifications((prev) => [
-        { id: Date.now(), from, message: preview, room: chatroomName, conversationId: "", chatroomId, createdAt: new Date().toISOString(), read: false },
+        { id: Date.now(), from, message: preview, room, conversationId: "", chatroomId, createdAt: new Date().toISOString(), read: false },
         ...prev.slice(0, 49),
       ]);
       notificationService.playSound("message");
-      void notificationService.showNotification(`${from} mentioned you in ${chatroomName}`, {
+      void notificationService.showNotification(`${from} mentioned you in ${room}`, {
         body: preview.length > 80 ? `${preview.substring(0, 80)}…` : preview,
         tag: `mention-${Date.now()}`,
       });

@@ -4,7 +4,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import LoginPage from "./LoginPage";
 import api from "../services/api";
 
-vi.mock("../services/api", () => ({ default: { post: vi.fn() } }));
+vi.mock("../services/api", () => ({
+  default: { post: vi.fn() },
+  apiErrorMessage: (err: unknown, fallback: string) =>
+    (err as { response?: { data?: { detail?: string; message?: string } } })?.response?.data?.detail ||
+    (err as { response?: { data?: { detail?: string; message?: string } } })?.response?.data?.message ||
+    fallback,
+}));
 vi.mock("../utils/toast", () => ({ makeToast: vi.fn() }));
 const setupSocket = vi.fn();
 vi.mock("../contexts/SocketContext", () => ({
@@ -57,13 +63,13 @@ describe("LoginPage two-factor step", () => {
     expect(localStorage.getItem("CC_Token")).toBeNull(); // the password alone is not a session
     expect(setUser).not.toHaveBeenCalled();
 
-    // Second step: code → /user/login/2fa with the pending token
+    // Second step: code → /api/v1/auth/login/2fa with the pending token
     post.mockResolvedValueOnce({ data: { message: "ok", token: "jwt-after-2fa", user: USER } });
     fireEvent.change(screen.getByLabelText("Two-factor code"), { target: { value: "123456" } });
     fireEvent.click(screen.getByRole("button", { name: "Verify" }));
 
     await waitFor(() => expect(setUser).toHaveBeenCalledWith(USER));
-    expect(post).toHaveBeenLastCalledWith("/user/login/2fa", { pendingToken: "pending.jwt", code: "123456" });
+    expect(post).toHaveBeenLastCalledWith("/api/v1/auth/login/2fa", { pendingToken: "pending.jwt", code: "123456" });
     expect(localStorage.getItem("CC_Token")).toBe("jwt-after-2fa");
   });
 

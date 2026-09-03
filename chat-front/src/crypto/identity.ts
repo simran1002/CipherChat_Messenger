@@ -47,7 +47,7 @@ export function generateIdentity(): StoredIdentity {
 /** PUT the public bundle to the directory (server verifies the prekey sig). */
 export async function publishIdentity(identity: StoredIdentity): Promise<void> {
   const sig = sign(fromBase64(identity.edPriv), fromBase64(identity.spkPub));
-  await api.put("/keys", {
+  await api.put("/api/v1/keys", {
     identityEd25519: identity.edPub,
     identityX25519: identity.xPub,
     signedPreKey: { keyId: identity.spkId, pubX25519: identity.spkPub, sig: toBase64(sig) },
@@ -129,7 +129,7 @@ async function encryptAndUpload(salt: Uint8Array, key: Uint8Array): Promise<void
   blob.set(salt);
   blob.set(iv, 16);
   blob.set(ct, 28);
-  await api.put("/keys/backup/blob", { blob: toBase64(blob) });
+  await api.put("/api/v1/keys/backup/blob", { blob: toBase64(blob) });
 }
 
 /** Encrypt identity + sessions under the recovery code and upload the blob. */
@@ -160,7 +160,7 @@ export async function refreshBackup(): Promise<boolean> {
 
 /** Download + decrypt the backup; restores identity and session records. */
 export async function restoreFromBackup(code: string): Promise<StoredIdentity> {
-  const res = await api.get<{ blob: string }>("/keys/backup/blob");
+  const res = await api.get<{ blob: string }>("/api/v1/keys/backup/blob");
   const blob = fromBase64(res.data.blob);
   const salt = blob.slice(0, 16);
   const iv = blob.slice(16, 28);

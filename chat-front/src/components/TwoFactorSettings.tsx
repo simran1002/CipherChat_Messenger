@@ -6,7 +6,7 @@ import {
   CheckIcon,
 } from "@heroicons/react/24/outline";
 import { makeToast } from "../utils/toast";
-import api from "../services/api";
+import api, { apiErrorMessage } from "../services/api";
 
 type Flow =
   | { step: "idle" }
@@ -17,9 +17,6 @@ type Flow =
 interface TwoFactorSettingsProps {
   initialEnabled: boolean;
 }
-
-const errMessage = (err: unknown): string | undefined =>
-  (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
 
 /**
  * Two-factor authentication card for the profile page.
@@ -39,7 +36,7 @@ const TwoFactorSettings = ({ initialEnabled }: TwoFactorSettingsProps) => {
   const startSetup = async () => {
     setBusy(true);
     try {
-      const res = await api.post("/user/2fa/setup", {});
+      const res = await api.post("/api/v1/auth/2fa/setup", {});
       const { otpauthUrl, secret } = res.data as { otpauthUrl: string; secret: string };
       let qrDataUrl: string | null = null;
       try {
@@ -50,7 +47,7 @@ const TwoFactorSettings = ({ initialEnabled }: TwoFactorSettingsProps) => {
       setCode("");
       setFlow({ step: "qr", otpauthUrl, secret, qrDataUrl });
     } catch (err) {
-      makeToast("error", errMessage(err) || "Could not start 2FA setup");
+      makeToast("error", apiErrorMessage(err, "Could not start 2FA setup"));
     } finally {
       setBusy(false);
     }
@@ -60,13 +57,13 @@ const TwoFactorSettings = ({ initialEnabled }: TwoFactorSettingsProps) => {
     e.preventDefault();
     setBusy(true);
     try {
-      const res = await api.post("/user/2fa/enable", { code });
+      const res = await api.post("/api/v1/auth/2fa/enable", { code });
       const { backupCodes } = res.data as { backupCodes: string[] };
       setEnabled(true);
       setFlow({ step: "codes", backupCodes });
       makeToast("success", "Two-factor authentication enabled");
     } catch (err) {
-      makeToast("error", errMessage(err) || "That code didn't match");
+      makeToast("error", apiErrorMessage(err, "That code didn't match"));
     } finally {
       setBusy(false);
     }
@@ -76,14 +73,14 @@ const TwoFactorSettings = ({ initialEnabled }: TwoFactorSettingsProps) => {
     e.preventDefault();
     setBusy(true);
     try {
-      await api.post("/user/2fa/disable", { password, code });
+      await api.post("/api/v1/auth/2fa/disable", { password, code });
       setEnabled(false);
       setFlow({ step: "idle" });
       setPassword("");
       setCode("");
       makeToast("success", "Two-factor authentication disabled");
     } catch (err) {
-      makeToast("error", errMessage(err) || "Could not disable 2FA");
+      makeToast("error", apiErrorMessage(err, "Could not disable 2FA"));
     } finally {
       setBusy(false);
     }

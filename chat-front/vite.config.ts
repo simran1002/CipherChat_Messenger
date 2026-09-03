@@ -4,20 +4,16 @@ import react from "@vitejs/plugin-react";
 
 /**
  * Dev proxy: with no VITE_API_URL set, the app talks to its own origin and
- * Vite forwards API + Socket.IO traffic to the backend. No CORS in dev, no
- * .env needed for a fresh clone, and the two-origin demo trick
+ * Vite forwards API + WebSocket traffic to the Java backend. No CORS in dev,
+ * no .env needed for a fresh clone, and the two-origin demo trick
  * (localhost:3000 vs 127.0.0.1:3000) needs no allowlist at all. Production
  * builds bake an absolute VITE_API_URL (see chat-front/Dockerfile).
  */
-const API_TARGET = process.env.VITE_DEV_API_TARGET || "http://localhost:8000";
-// NOTE: no "/metrics" here — that's the app's own metrics-dashboard ROUTE.
-// Proxying it shadowed the page with the backend's Prometheus endpoint on
-// hard reloads. The dashboard's data comes via /analytics; the Prometheus
-// text endpoint is for operators hitting the backend port directly.
-const API_PREFIXES = [
-  "/user", "/chatroom", "/dm", "/upload", "/uploads", "/ai", "/presence",
-  "/analytics", "/keys", "/health",
-];
+const API_TARGET = process.env.VITE_DEV_API_TARGET || "http://localhost:8080";
+// All REST lives under /api (see docs/API.md); /uploads is where stored
+// files are served from (StorageProperties' local driver), /actuator is
+// Spring Boot's health/metrics surface, and /ws is the STOMP endpoint.
+const API_PREFIXES = ["/api", "/uploads", "/actuator"];
 
 /**
  * Proxied requests are same-origin from the app's point of view, so the
@@ -42,7 +38,7 @@ export default defineConfig({
       ...Object.fromEntries(
         API_PREFIXES.map((p) => [p, { target: API_TARGET, changeOrigin: true, configure: stripOrigin }])
       ),
-      "/socket.io": { target: API_TARGET, changeOrigin: true, ws: true, configure: stripOrigin },
+      "/ws": { target: API_TARGET, changeOrigin: true, ws: true, configure: stripOrigin },
     },
   },
   build: {

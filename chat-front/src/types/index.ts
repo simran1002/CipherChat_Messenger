@@ -1,13 +1,13 @@
 export * from "./socket";
 
-/** Authenticated user as stored in localStorage (CC_User). */
+/** Authenticated user as stored in localStorage (CC_User). Mirrors user.UserView. */
 export interface AuthUser {
   id: string;
   name: string;
   email: string;
   dp?: string;
   bio?: string;
-  /** Present on /user/profile responses only. */
+  /** Present on /api/v1/users/me responses only. */
   twoFactorEnabled?: boolean;
 }
 
@@ -45,7 +45,7 @@ export interface ChatMessage {
   _pending?: boolean;
 }
 
-/** DM conversation list row (GET /dm). */
+/** DM conversation list row (GET /api/v1/conversations). Mirrors DmDtos.ConversationView. */
 export interface DmConversation {
   _id: string;
   participant: { _id: string; name: string; email?: string; dp?: string } | null;
@@ -53,7 +53,7 @@ export interface DmConversation {
   lastMessageAt: string;
 }
 
-/** Single DM message (GET /dm/:id/messages and socket receive), post-decrypt. */
+/** Single DM message (GET /api/v1/conversations/:id/messages and socket receive), post-decrypt. */
 export interface DmMessage {
   _id: string;
   type?: "e2ee/v1" | "plaintext-legacy";
@@ -70,9 +70,11 @@ export interface DmMessage {
   _pending?: boolean;
 }
 
+/** Mirrors ChatroomDtos.RoomView — `createdBy` is a user id, name is separate. */
 export interface Chatroom {
   _id: string;
   name: string;
-  createdBy?: { _id: string; name: string } | null;
+  createdBy?: string | null;
+  createdByName?: string | null;
   createdAt?: string;
 }

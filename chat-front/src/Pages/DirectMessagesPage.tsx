@@ -12,7 +12,7 @@ import {
   ShieldCheckIcon,
 } from "@heroicons/react/24/outline";
 import { makeToast } from "../utils/toast";
-import api from "../services/api";
+import api, { apiErrorMessage } from "../services/api";
 import e2eeService from "../services/E2EEService";
 import { useE2EE, isNoKeysError } from "../hooks/useE2EE";
 import E2EESetupGate from "../components/E2EESetupGate";
@@ -42,24 +42,41 @@ interface AvatarUser {
 /** Only the fields this page reads from a conversation (startNewDM builds a partial one). */
 type ConversationLike = Pick<DmConversation, "_id" | "participant">;
 
-/** Row from GET /dm/users. */
+/** Row from GET /api/v1/users (UserView — has email; the room-members directory does not). */
 interface DmUser {
-  _id: string;
+  id: string;
   name: string;
   email: string;
   dp?: string;
 }
 
-/** Raw row from GET /dm/:id/messages (pre-decrypt). */
+/** Raw conversation row from GET /api/v1/conversations (DmDtos.ConversationView). */
+interface RawConversationView {
+  id: string;
+  participant: { id: string; name: string; dp?: string } | null;
+  lastMessage: { message: string; encrypted?: boolean; createdAt: string } | null;
+  lastMessageAt: string;
+}
+
+const mapRawConversation = (c: RawConversationView): DmConversation => ({
+  _id: c.id,
+  participant: c.participant
+    ? { _id: c.participant.id, name: c.participant.name, dp: c.participant.dp }
+    : null,
+  lastMessage: c.lastMessage,
+  lastMessageAt: c.lastMessageAt,
+});
+
+/** Raw row from GET /api/v1/conversations/:id/messages (pre-decrypt; DmDtos.MessageView). */
 interface RawDmRow {
-  _id: string;
+  id: string;
   type?: "e2ee/v1" | "plaintext-legacy";
   message?: string;
   envelope?: DmEnvelope;
   clientMessageId?: string | null;
   edited?: boolean;
   userId: string;
-  user?: { _id: string; name?: string; dp?: string } | null;
+  user?: { id: string; name?: string; dp?: string } | null;
   createdAt: string;
 }
 
@@ -127,8 +144,8 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
   const loadConversations = useCallback(async () => {
     try {
       setIsLoadingConvs(true);
-      const res = await api.get("/dm");
-      const rows = res.data as DmConversation[];
+      const res = await api.get("/api/v1/conversations");
+      const rows = (res.data as RawConversationView[]).map(mapRawConversation);
       // Substitute locally cached decrypted previews for "🔒 Encrypted message"
       const withPreviews = await Promise.all(
         rows.map(async (conv) => {
@@ -177,13 +194,13 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
     setDmSearch("");
     setIsLoadingMsgs(true);
     try {
-      const res = await api.get(`/dm/${conv._id}/messages`);
+      const res = await api.get(`/api/v1/conversations/${conv._id}/messages`);
       const rows = res.data.messages as RawDmRow[];
       const me = currentUserId || getCurrentUserId() || "";
       const normalized = await Promise.all(
         rows.map(async (row): Promise<DmMessage> => {
           const base = {
-            _id: row._id,
+            _id: row.id,
             type: row.type,
             clientMessageId: row.clientMessageId,
             edited: row.edited,
@@ -277,7 +294,7 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
         if (!activeConv || data.conversationId !== activeConv._id) return;
 
         const msg: DmMessage = {
-          _id: data._id,
+          _id: data.id,
           type: data.type,
           message: text,
           envelope: data.envelope,
@@ -291,7 +308,7 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
         };
         setMessages((prev) => {
           // Idempotent: never append a duplicate _id
-          if (prev.some((m) => m._id === data._id && !m._pending)) return prev;
+          if (prev.some((m) => m._id === data.id && !m._pending)) return prev;
           const pendingIdx = data.clientMessageId
             ? prev.findIndex((m) => m.clientMessageId === data.clientMessageId)
             : -1;
@@ -335,8 +352,6 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
   /** Emit with a 5s ack timeout; reconcile or drop the optimistic bubble. */
   const emitDirectMessage = (payload: DirectMessagePayload, clientMessageId: string) => {
     if (!socket) return;
-    // The event map declares the plain ack signature; socket.timeout() calls the
-    // callback as (err, ack) at runtime, so adapt the type here.
     const onAck = (err: Error | null, ack?: DmMessageAck) => {
       if (err || !ack?.ok || !ack.messageId) {
         makeToast("error", "Message failed to send");
@@ -356,9 +371,7 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
         );
       });
     };
-    socket
-      .timeout(5000)
-      .emit("directMessage", payload, onAck as unknown as (a: DmMessageAck) => void);
+    socket.timeout(5000).emit("directMessage", payload, onAck);
   };
 
   const sendMessage = async (e: FormEvent<HTMLFormElement>) => {
@@ -515,21 +528,19 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
 
   const startNewDM = async (targetUser: DmUser) => {
     try {
-      const res = await api.post("/dm/start", { targetUserId: targetUser._id });
+      const res = await api.post("/api/v1/conversations", { targetUserId: targetUser.id });
       setShowNewDM(false);
       await loadConversations();
-      const conv: ConversationLike = { _id: res.data._id, participant: res.data.participant };
+      const conv = mapRawConversation(res.data as RawConversationView);
       openConversation(conv);
     } catch (err) {
-      const message = (err as { response?: { data?: { message?: string } } })?.response?.data
-        ?.message;
-      makeToast("error", message || "Failed to start conversation");
+      makeToast("error", apiErrorMessage(err, "Failed to start conversation"));
     }
   };
 
   const loadAllUsers = async () => {
     try {
-      const res = await api.get("/dm/users");
+      const res = await api.get("/api/v1/users");
       setAllUsers(res.data as DmUser[]);
     } catch {
       makeToast("error", "Failed to load users");
@@ -891,7 +902,7 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
                 <div className="max-h-64 overflow-y-auto space-y-1">
                   {filteredUsers.map((u) => (
                     <button
-                      key={u._id}
+                      key={u.id}
                       onClick={() => startNewDM(u)}
                       className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-gray-700/50 transition-colors text-left"
                     >

@@ -43,7 +43,7 @@ const PresencePicker = ({ currentStatus = "available", currentNote = "", onUpdat
 
   const handleSelect = async (option: PresenceOption) => {
     try {
-      await api.put("/presence", { presenceStatus: option.value, presenceNote: note });
+      await api.put("/api/v1/users/me/presence", { presenceStatus: option.value, presenceNote: note });
       socket?.emit("presenceUpdate", { presenceStatus: option.value, presenceNote: note });
       onUpdate?.({ presenceStatus: option.value, presenceNote: note });
       setOpen(false);

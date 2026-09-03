@@ -4,12 +4,9 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
-# Baked at build time — Vite inlines these into the bundle
-ARG VITE_API_URL=http://localhost:8000
+# Baked at build time — Vite inlines this into the bundle
+ARG VITE_API_URL=http://localhost:8080
 ENV VITE_API_URL=$VITE_API_URL
-# "websocket" for the least_conn LB profile (no polling → no sticky sessions)
-ARG VITE_SOCKET_TRANSPORTS=websocket,polling
-ENV VITE_SOCKET_TRANSPORTS=$VITE_SOCKET_TRANSPORTS
 RUN npm run build
 
 # ── Runtime: static files behind nginx ────────────────────────────────────────

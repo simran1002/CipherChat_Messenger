@@ -1,6 +1,6 @@
 /**
  * Room members panel — membership list, roles, invite, leave.
- * Slide-over from the right; data from GET /chatroom/:id/members.
+ * Slide-over from the right; data from GET /api/v1/chatrooms/:id/members.
  */
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -12,7 +12,7 @@ import {
   ArrowRightOnRectangleIcon,
   LockClosedIcon,
 } from "@heroicons/react/24/outline";
-import api, { getApiUrl } from "../services/api";
+import api, { apiErrorMessage, getApiUrl } from "../services/api";
 import { makeToast } from "../utils/toast";
 import { stringToColor, getInitials } from "../utils/helpers";
 
@@ -26,16 +26,17 @@ export interface RoomMembersPanelProps {
 
 type RoomRole = "owner" | "admin" | "member";
 
+/** ChatroomDtos.MemberView: `user` is the id/name/dp summary; email and online state ride alongside it. */
 interface MemberUser {
-  _id: string;
+  id: string;
   name: string;
-  email?: string;
   dp?: string;
-  isOnline?: boolean;
 }
 
 interface RoomMember {
   user: MemberUser;
+  email?: string;
+  isOnline?: boolean;
   role: RoomRole;
   joinedAt?: string;
 }
@@ -46,8 +47,9 @@ interface MembersResponse {
   myRole: RoomRole | null;
 }
 
+/** GET /api/v1/users row (UserView) — has email, unlike a room member row. */
 interface DirectoryUser {
-  _id: string;
+  id: string;
   name: string;
   email?: string;
   dp?: string;
@@ -58,11 +60,6 @@ const ROLE_BADGE: Record<RoomRole, string> = {
   admin: "bg-sky-500/15 text-sky-400 border-sky-500/30",
   member: "bg-gray-600/20 text-gray-400 border-gray-600/40",
 };
-
-function apiError(err: unknown, fallback: string): string {
-  const message = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
-  return message || fallback;
-}
 
 function MemberAvatar({ user, sizeClass = "w-9 h-9" }: { user: { name: string; dp?: string }; sizeClass?: string }) {
   const dpSrc = user.dp ? (user.dp.startsWith("http") ? user.dp : `${getApiUrl()}${user.dp}`) : null;
@@ -100,13 +97,13 @@ const RoomMembersPanel = ({ chatroomId, isOpen, onClose, onLeft }: RoomMembersPa
 
   const fetchMembers = useCallback(async () => {
     try {
-      const res = await api.get(`/chatroom/${chatroomId}/members`);
+      const res = await api.get(`/api/v1/chatrooms/${chatroomId}/members`);
       const data = res.data as MembersResponse;
       setMembers(data.members);
       setIsPrivate(Boolean(data.isPrivate));
       setMyRole(data.myRole);
     } catch (err) {
-      makeToast("error", apiError(err, "Failed to load members"));
+      makeToast("error", apiErrorMessage(err, "Failed to load members"));
     } finally {
       setLoading(false);
     }
@@ -122,9 +119,9 @@ const RoomMembersPanel = ({ chatroomId, isOpen, onClose, onLeft }: RoomMembersPa
   useEffect(() => {
     if (!showInvite || allUsers !== null) return;
     api
-      .get("/dm/users")
+      .get("/api/v1/users")
       .then((res) => setAllUsers(res.data as DirectoryUser[]))
-      .catch((err) => makeToast("error", apiError(err, "Failed to load users")));
+      .catch((err) => makeToast("error", apiErrorMessage(err, "Failed to load users")));
   }, [showInvite, allUsers]);
 
   const canManage = myRole === "owner" || myRole === "admin";
@@ -132,21 +129,21 @@ const RoomMembersPanel = ({ chatroomId, isOpen, onClose, onLeft }: RoomMembersPa
 
   const invitableUsers = useMemo(() => {
     if (!allUsers) return [];
-    const memberIds = new Set(members.map((m) => m.user._id));
+    const memberIds = new Set(members.map((m) => m.user.id));
     const q = inviteSearch.trim().toLowerCase();
     return allUsers
-      .filter((u) => !memberIds.has(u._id))
+      .filter((u) => !memberIds.has(u.id))
       .filter((u) => !q || u.name.toLowerCase().includes(q) || (u.email ?? "").toLowerCase().includes(q));
   }, [allUsers, members, inviteSearch]);
 
   const handleInvite = async (user: DirectoryUser) => {
-    setInvitingId(user._id);
+    setInvitingId(user.id);
     try {
-      const res = await api.post(`/chatroom/${chatroomId}/invite`, { userId: user._id });
+      const res = await api.post(`/api/v1/chatrooms/${chatroomId}/invite`, { userId: user.id });
       makeToast("success", (res.data as { message?: string }).message || `${user.name} invited`);
       await fetchMembers();
     } catch (err) {
-      makeToast("error", apiError(err, "Failed to invite user"));
+      makeToast("error", apiErrorMessage(err, "Failed to invite user"));
     } finally {
       setInvitingId(null);
     }
@@ -155,11 +152,11 @@ const RoomMembersPanel = ({ chatroomId, isOpen, onClose, onLeft }: RoomMembersPa
   const applyRole = async (member: RoomMember, role: RoomRole) => {
     setSavingRole(true);
     try {
-      await api.patch(`/chatroom/${chatroomId}/members/${member.user._id}`, { role });
+      await api.patch(`/api/v1/chatrooms/${chatroomId}/members/${member.user.id}`, { role });
       makeToast("success", role === "owner" ? `Ownership transferred to ${member.user.name}` : "Role updated");
       await fetchMembers();
     } catch (err) {
-      makeToast("error", apiError(err, "Failed to update role"));
+      makeToast("error", apiErrorMessage(err, "Failed to update role"));
     } finally {
       setSavingRole(false);
       setTransferTarget(null);
@@ -178,12 +175,12 @@ const RoomMembersPanel = ({ chatroomId, isOpen, onClose, onLeft }: RoomMembersPa
   const handleLeave = async () => {
     setLeaving(true);
     try {
-      await api.post(`/chatroom/${chatroomId}/leave`);
+      await api.post(`/api/v1/chatrooms/${chatroomId}/leave`);
       makeToast("success", "You left the room");
       onClose();
       onLeft?.();
     } catch (err) {
-      makeToast("error", apiError(err, "Failed to leave the room"));
+      makeToast("error", apiErrorMessage(err, "Failed to leave the room"));
     } finally {
       setLeaving(false);
     }
@@ -267,7 +264,7 @@ const RoomMembersPanel = ({ chatroomId, isOpen, onClose, onLeft }: RoomMembersPa
                                 <p className="text-xs text-gray-500 py-2 text-center">No users to invite</p>
                               ) : (
                                 invitableUsers.map((u) => (
-                                  <div key={u._id} className="flex items-center gap-2.5 px-2 py-1.5 rounded-xl hover:bg-gray-800/70 transition-colors">
+                                  <div key={u.id} className="flex items-center gap-2.5 px-2 py-1.5 rounded-xl hover:bg-gray-800/70 transition-colors">
                                     <MemberAvatar user={u} sizeClass="w-7 h-7" />
                                     <div className="flex-1 min-w-0">
                                       <p className="text-sm text-gray-200 truncate">{u.name}</p>
@@ -275,10 +272,10 @@ const RoomMembersPanel = ({ chatroomId, isOpen, onClose, onLeft }: RoomMembersPa
                                     </div>
                                     <button
                                       onClick={() => void handleInvite(u)}
-                                      disabled={invitingId === u._id}
+                                      disabled={invitingId === u.id}
                                       className="text-xs font-medium text-violet-400 hover:text-violet-300 border border-violet-500/30 hover:border-violet-500/60 rounded-lg px-2.5 py-1 disabled:opacity-50 transition-all"
                                     >
-                                      {invitingId === u._id ? "Adding…" : "Invite"}
+                                      {invitingId === u.id ? "Adding…" : "Invite"}
                                     </button>
                                   </div>
                                 ))
@@ -293,24 +290,27 @@ const RoomMembersPanel = ({ chatroomId, isOpen, onClose, onLeft }: RoomMembersPa
                   {/* Member list */}
                   <ul className="px-3 py-2">
                     {members.map((m) => (
-                      <li key={m.user._id} className="flex items-center gap-3 px-2 py-2.5 rounded-xl hover:bg-gray-800/50 transition-colors">
+                      <li key={m.user.id} className="flex items-center gap-3 px-2 py-2.5 rounded-xl hover:bg-gray-800/50 transition-colors">
                         <div className="relative shrink-0">
                           <MemberAvatar user={m.user} />
-                          {m.user.isOnline && (
-                            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 rounded-full ring-2 ring-gray-900" />
+                          {m.isOnline && (
+                            <span
+                              className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-gray-900"
+                              aria-label="online"
+                            />
                           )}
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-gray-200 truncate">
                             {m.user.name}
-                            {m.user._id === myId && <span className="text-gray-500 font-normal"> (you)</span>}
+                            {m.user.id === myId && <span className="text-gray-500 font-normal"> (you)</span>}
                           </p>
-                          {m.user.email && <p className="text-[11px] text-gray-500 truncate">{m.user.email}</p>}
+                          {m.email && <p className="text-[11px] text-gray-500 truncate">{m.email}</p>}
                         </div>
                         <span className={`text-[10px] font-semibold uppercase tracking-wide border rounded-full px-2 py-0.5 shrink-0 ${ROLE_BADGE[m.role]}`}>
                           {m.role}
                         </span>
-                        {isOwner && m.user._id !== myId && (
+                        {isOwner && m.user.id !== myId && (
                           <select
                             value={m.role}
                             disabled={savingRole}

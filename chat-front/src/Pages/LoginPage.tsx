@@ -11,7 +11,7 @@ import {
   ShieldCheckIcon,
 } from "@heroicons/react/24/outline";
 import { makeToast } from "../utils/toast";
-import api from "../services/api";
+import api, { apiErrorMessage } from "../services/api";
 import type { AuthUser } from "../types";
 
 interface LoginPageProps {
@@ -53,7 +53,7 @@ const LoginPage = ({ setUser }: LoginPageProps) => {
     setIsLoading(true);
 
     try {
-      const response = await api.post("/user/login", formData);
+      const response = await api.post("/api/v1/auth/login", formData);
       const data = response.data as Partial<LoginSuccess> & {
         requires2fa?: boolean;
         pendingToken?: string;
@@ -64,9 +64,7 @@ const LoginPage = ({ setUser }: LoginPageProps) => {
       }
       finishLogin(data as LoginSuccess);
     } catch (err) {
-      const message = (err as { response?: { data?: { message?: string } } })?.response?.data
-        ?.message;
-      makeToast("error", message || "An error occurred. Please try again.");
+      makeToast("error", apiErrorMessage(err, "An error occurred. Please try again."));
     } finally {
       setIsLoading(false);
     }
@@ -76,14 +74,13 @@ const LoginPage = ({ setUser }: LoginPageProps) => {
     e.preventDefault();
     setIsLoading(true);
     try {
-      const response = await api.post("/user/login/2fa", { pendingToken, code: totpCode });
+      const response = await api.post("/api/v1/auth/login/2fa", { pendingToken, code: totpCode });
       finishLogin(response.data as LoginSuccess);
     } catch (err) {
-      const resp = (err as { response?: { status?: number; data?: { message?: string; code?: string } } })
-        ?.response;
-      makeToast("error", resp?.data?.message || "That code didn't match.");
+      const code = (err as { response?: { data?: { code?: string } } })?.response?.data?.code;
+      makeToast("error", apiErrorMessage(err, "That code didn't match."));
       // The pending token lives 5 minutes — an expiry sends them back to step 1
-      if (resp?.data?.code === "2fa_pending_invalid") {
+      if (code === "2fa_pending_invalid") {
         setPendingToken(null);
         setTotpCode("");
       }

@@ -4,7 +4,13 @@ import TwoFactorSettings from "./TwoFactorSettings";
 import api from "../services/api";
 import { makeToast } from "../utils/toast";
 
-vi.mock("../services/api", () => ({ default: { post: vi.fn() } }));
+vi.mock("../services/api", () => ({
+  default: { post: vi.fn() },
+  apiErrorMessage: (err: unknown, fallback: string) =>
+    (err as { response?: { data?: { detail?: string; message?: string } } })?.response?.data?.detail ||
+    (err as { response?: { data?: { detail?: string; message?: string } } })?.response?.data?.message ||
+    fallback,
+}));
 vi.mock("../utils/toast", () => ({ makeToast: vi.fn() }));
 // qrcode draws to a canvas — irrelevant here, return a stable data URL
 vi.mock("qrcode", () => ({
@@ -40,7 +46,7 @@ describe("TwoFactorSettings", () => {
 
     // QR step: image + manual-entry secret + confirmation input
     await waitFor(() => expect(screen.getByText("JBSWY3DP")).toBeInTheDocument());
-    expect(post).toHaveBeenCalledWith("/user/2fa/setup", {});
+    expect(post).toHaveBeenCalledWith("/api/v1/auth/2fa/setup", {});
     expect(screen.getByAltText(/Scan this QR code/)).toHaveAttribute("src", "data:image/png;base64,QR");
 
     fireEvent.change(screen.getByLabelText("Confirmation code"), { target: { value: "123456" } });
@@ -48,7 +54,7 @@ describe("TwoFactorSettings", () => {
 
     // Backup codes step — all 8, plus the status flipping to Enabled
     await waitFor(() => expect(screen.getByText(BACKUP_CODES[0])).toBeInTheDocument());
-    expect(post).toHaveBeenCalledWith("/user/2fa/enable", { code: "123456" });
+    expect(post).toHaveBeenCalledWith("/api/v1/auth/2fa/enable", { code: "123456" });
     for (const code of BACKUP_CODES) expect(screen.getByText(code)).toBeInTheDocument();
     expect(screen.getByText("Enabled")).toBeInTheDocument();
 
@@ -87,6 +93,6 @@ describe("TwoFactorSettings", () => {
     fireEvent.click(screen.getByRole("button", { name: "Disable 2FA" }));
 
     await waitFor(() => expect(screen.getByText("Off")).toBeInTheDocument());
-    expect(post).toHaveBeenCalledWith("/user/2fa/disable", { password: "pw", code: "654321" });
+    expect(post).toHaveBeenCalledWith("/api/v1/auth/2fa/disable", { password: "pw", code: "654321" });
   });
 });

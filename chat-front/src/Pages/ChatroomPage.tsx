@@ -11,7 +11,7 @@ import {
   SignalSlashIcon,
 } from "@heroicons/react/24/outline";
 import { makeToast } from "../utils/toast";
-import api from "../services/api";
+import api, { apiErrorMessage } from "../services/api";
 import notificationService from "../services/NotificationService";
 import { drain as drainOfflineQueue } from "../services/OfflineQueue";
 import { useMessageDelivery } from "../hooks/useMessageDelivery";
@@ -47,11 +47,14 @@ interface TypingUser {
   name: string;
 }
 
-/** Raw REST row from GET /chatroom/:id/messages — user is nested, not flattened. */
+/** Raw REST row from GET /api/v1/chatrooms/:id/messages — flat sender fields (ChatroomDtos.MessageView). */
 interface RawChatroomMessage {
-  _id: string;
+  id: string;
   type?: string;
   message?: string;
+  userId: string;
+  name: string;
+  dp: string;
   fileUrl?: string;
   fileName?: string;
   mimeType?: string;
@@ -63,20 +66,20 @@ interface RawChatroomMessage {
   replyTo?: ReplyToRef | null;
   pinned?: boolean;
   sequenceNumber?: number;
-  readBy?: Array<{ user: string; readAt?: string }>;
+  /** ReceiptView is {user, at} on the wire — mapped to the UI's {user, readAt}. */
+  readBy?: Array<{ user: string; at?: string }>;
   deliveredTo?: string[];
-  user?: { _id?: string; name?: string; dp?: string } | null;
   createdAt: string;
 }
 
-/** Cursor block returned by GET /chatroom/:id/messages. */
+/** Cursor block returned by GET /api/v1/chatrooms/:id/messages. */
 interface MessagesCursor {
   nextCursor: string | null;
   hasMore: boolean;
 }
 
 const mapRawMessage = (m: RawChatroomMessage): ChatMessage => ({
-  _id: m._id,
+  _id: m.id,
   type: m.type || "text",
   message: m.message || "",
   fileUrl: m.fileUrl || "",
@@ -90,11 +93,11 @@ const mapRawMessage = (m: RawChatroomMessage): ChatMessage => ({
   replyTo: m.replyTo || null,
   pinned: m.pinned || false,
   sequenceNumber: m.sequenceNumber || 0,
-  readBy: m.readBy || [],
+  readBy: (m.readBy || []).map((r) => ({ user: r.user, readAt: r.at })),
   deliveredTo: m.deliveredTo || [],
-  name: m.user?.name || "Unknown",
-  userId: m.user?._id as string,
-  dp: m.user?.dp || "",
+  name: m.name || "Unknown",
+  userId: m.userId,
+  dp: m.dp || "",
   createdAt: m.createdAt,
 });
 
@@ -198,7 +201,7 @@ const ChatroomPage = ({ user }: ChatroomPageProps) => {
   const loadInitial = useCallback(async () => {
     try {
       setIsLoadingMessages(true);
-      const response = await api.get(`/chatroom/${chatroomId}/messages`, {
+      const response = await api.get(`/api/v1/chatrooms/${chatroomId}/messages`, {
         params: { limit: MESSAGES_PER_PAGE },
       });
       const { messages: msgs, chatroom, cursor } = response.data as {
@@ -241,7 +244,7 @@ const ChatroomPage = ({ user }: ChatroomPageProps) => {
     loadingMoreRef.current = true;
     setIsLoadingMore(true);
     try {
-      const response = await api.get(`/chatroom/${chatroomId}/messages`, {
+      const response = await api.get(`/api/v1/chatrooms/${chatroomId}/messages`, {
         params: { before: cur, limit: MESSAGES_PER_PAGE },
       });
       const { messages: msgs, cursor } = response.data as {
@@ -263,8 +266,8 @@ const ChatroomPage = ({ user }: ChatroomPageProps) => {
 
   const loadPinned = useCallback(async () => {
     try {
-      const res = await api.get(`/chatroom/${chatroomId}/pinned`);
-      setPinnedMessages(res.data as ChatMessage[]);
+      const res = await api.get(`/api/v1/chatrooms/${chatroomId}/pinned`);
+      setPinnedMessages((res.data as RawChatroomMessage[]).map(mapRawMessage));
     } catch {}
   }, [chatroomId]);
 
@@ -306,15 +309,9 @@ const ChatroomPage = ({ user }: ChatroomPageProps) => {
     setSearchQuery(q);
     if (!q) { setSearchResults(null); return; }
     try {
-      const res = await api.get(`/chatroom/${chatroomId}/messages/search`, { params: { q } });
+      const res = await api.get(`/api/v1/chatrooms/${chatroomId}/messages/search`, { params: { q } });
       const rows = res.data.messages as RawChatroomMessage[];
-      const mapped: ChatMessage[] = rows.map((m) => ({
-        _id: m._id, type: m.type || "text", message: m.message || "",
-        fileUrl: m.fileUrl, fileName: m.fileName, mimeType: m.mimeType,
-        lat: m.lat, lng: m.lng, edited: m.edited, reactions: m.reactions || [],
-        replyTo: m.replyTo, name: m.user?.name || "?", userId: m.user?._id as string,
-        dp: m.user?.dp || "", createdAt: m.createdAt,
-      }));
+      const mapped: ChatMessage[] = rows.map(mapRawMessage);
       setSearchResults(mapped);
     } catch { makeToast("error", "Search failed"); }
   };
@@ -325,7 +322,7 @@ const ChatroomPage = ({ user }: ChatroomPageProps) => {
 
     const handleNewMessage = (msg: NewMessagePayload) => {
       const mapped: ChatMessage = {
-        _id: msg._id,
+        _id: msg.id,
         type: msg.type || "text",
         message: msg.message || "",
         fileUrl: msg.fileUrl || "",
@@ -386,8 +383,8 @@ const ChatroomPage = ({ user }: ChatroomPageProps) => {
       }
 
       // Emit delivery receipt for others' messages
-      if (msg.userId !== userId && msg._id) {
-        socket.emit("messageDelivered", { messageId: msg._id, chatroomId });
+      if (msg.userId !== userId && msg.id) {
+        socket.emit("messageDelivered", { messageId: msg.id, chatroomId });
       }
 
       if (document.hidden && msg.userId !== userId) {
@@ -412,11 +409,7 @@ const ChatroomPage = ({ user }: ChatroomPageProps) => {
           if (
             upToSequence == null || (m.sequenceNumber != null && m.sequenceNumber <= upToSequence)
           ) {
-            // Server may send readBy.user as an id string or a populated object
-            const alreadyRead = m.readBy?.some((r) => {
-              const u = r.user as string | { _id?: string } | null | undefined;
-              return u === readerId || (typeof u === "object" ? u?._id === readerId : false);
-            });
+            const alreadyRead = m.readBy?.some((r) => r.user === readerId);
             if (!alreadyRead) {
               return { ...m, readBy: [...(m.readBy || []), { user: readerId, readAt: new Date().toISOString() }] };
             }
@@ -579,35 +572,31 @@ const ChatroomPage = ({ user }: ChatroomPageProps) => {
 
   const handleSaveEdit = async (messageId: string, newText: string) => {
     try {
-      await api.put(`/chatroom/messages/${messageId}`, { message: newText });
+      await api.put(`/api/v1/chatrooms/messages/${messageId}`, { message: newText });
       setMessages((prev) => prev.map((m) => m._id === messageId ? { ...m, message: newText, edited: true } : m));
       socket?.emit("messageEdited", { chatroomId, messageId, newText });
       setEditingId(null);
       makeToast("success", "Message updated");
     } catch (err) {
-      const message = (err as { response?: { data?: { message?: string } } })?.response?.data
-        ?.message;
-      makeToast("error", message || "Failed to edit");
+      makeToast("error", apiErrorMessage(err, "Failed to edit"));
     }
   };
 
   const handleConfirmDelete = async (messageId: string) => {
     try {
-      await api.delete(`/chatroom/messages/${messageId}`);
+      await api.delete(`/api/v1/chatrooms/messages/${messageId}`);
       setMessages((prev) => prev.filter((m) => m._id !== messageId));
       socket?.emit("messageDeleted", { chatroomId, messageId });
       setDeleteTarget(null);
       makeToast("success", "Message deleted");
     } catch (err) {
-      const message = (err as { response?: { data?: { message?: string } } })?.response?.data
-        ?.message;
-      makeToast("error", message || "Failed to delete");
+      makeToast("error", apiErrorMessage(err, "Failed to delete"));
     }
   };
 
   const handleReact = async (messageId: string, emoji: string) => {
     try {
-      const res = await api.post(`/chatroom/messages/${messageId}/react`, { emoji });
+      const res = await api.post(`/api/v1/chatrooms/messages/${messageId}/react`, { emoji });
       const reactions = res.data.reactions as ReactionEntry[];
       setMessages((prev) => prev.map((m) => m._id === messageId ? { ...m, reactions } : m));
       socket?.emit("reactionToggled", { chatroomId, messageId, reactions });
@@ -616,7 +605,7 @@ const ChatroomPage = ({ user }: ChatroomPageProps) => {
 
   const handlePin = async (messageId: string) => {
     try {
-      const res = await api.post(`/chatroom/messages/${messageId}/pin`);
+      const res = await api.post(`/api/v1/chatrooms/messages/${messageId}/pin`);
       const pinned = res.data.pinned as boolean;
       setMessages((prev) => prev.map((m) => m._id === messageId ? { ...m, pinned } : m));
       socket?.emit("messagePinned", { chatroomId, messageId, pinned });

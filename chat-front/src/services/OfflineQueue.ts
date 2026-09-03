@@ -200,12 +200,8 @@ export async function drainDms(
 
   for (const item of items) {
     const ack = await new Promise<DmMessageAck>((resolve) => {
-      // The event map declares the plain ack signature; socket.timeout() calls
-      // the callback as (err, ack) at runtime, so adapt the type here.
-      const onTimeoutAck = ((err: Error | null, response?: DmMessageAck) =>
-        resolve(err || !response ? { ok: false, error: "server_error" } : response)) as unknown as (
-        a: DmMessageAck
-      ) => void;
+      const onTimeoutAck = (err: Error | null, response?: DmMessageAck) =>
+        resolve(err || !response ? { ok: false, error: "server_error" } : response);
       socket
         .timeout(8000)
         .emit(

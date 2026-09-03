@@ -1,5 +1,5 @@
 /**
- * Live system metrics dashboard — polls GET /analytics/metrics every 5s.
+ * Live system metrics dashboard — polls GET /api/v1/analytics/metrics every 5s.
  */
 import { useState, useEffect, useCallback } from "react";
 import {
@@ -96,7 +96,7 @@ const MetricsDashboardPage = () => {
 
   const fetchMetrics = useCallback(async () => {
     try {
-      const res = await api.get("/analytics/metrics");
+      const res = await api.get("/api/v1/analytics/metrics");
       setMetrics(res.data as MetricsSummary);
       setError(false);
     } catch {
@@ -131,7 +131,7 @@ const MetricsDashboardPage = () => {
             </div>
             <div>
               <h1 className="text-2xl sm:text-3xl font-bold text-white">
-                System Metrics — live from /analytics/metrics
+                System Metrics — live from /api/v1/analytics/metrics
               </h1>
               <p className="text-gray-400 mt-0.5 text-sm flex items-center gap-2">
                 <span className={`w-2 h-2 rounded-full ${error ? "bg-red-500" : "bg-green-500 animate-pulse"}`} />

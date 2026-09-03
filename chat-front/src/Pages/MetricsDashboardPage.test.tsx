@@ -93,14 +93,14 @@ describe("MetricsDashboardPage", () => {
     vi.useRealTimers();
   });
 
-  it("fetches /analytics/metrics on mount and renders every stat card from the payload", async () => {
+  it("fetches /api/v1/analytics/metrics on mount and renders every stat card from the payload", async () => {
     getMock.mockResolvedValue({ data: PAYLOAD });
     render(<MetricsDashboardPage />);
 
     // Spinner until the first payload lands
     expect(screen.queryByText("Delivery rate")).not.toBeInTheDocument();
     expect(getMock).toHaveBeenCalledTimes(1);
-    expect(getMock).toHaveBeenCalledWith("/analytics/metrics");
+    expect(getMock).toHaveBeenCalledWith("/api/v1/analytics/metrics");
 
     await screen.findByText("Delivery rate");
 

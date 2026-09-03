@@ -11,7 +11,7 @@ import {
   CameraIcon,
 } from "@heroicons/react/24/outline";
 import { makeToast } from "../utils/toast";
-import api from "../services/api";
+import api, { apiErrorMessage } from "../services/api";
 import type { AuthUser } from "../types";
 
 const RegisterPage = () => {
@@ -61,22 +61,42 @@ const RegisterPage = () => {
 
     setIsLoading(true);
     try {
-      const response = await api.post("/user/register", {
+      // AuthDtos.RegisterRequest has no avatar field — the Java backend has no
+      // combined "register with avatar" endpoint. Register first, then (if a
+      // picture was chosen) upload it and attach it via the same
+      // upload-then-PATCH flow ProfilePage uses, so signup keeps behaving like
+      // one step from the user's point of view.
+      const response = await api.post("/api/v1/auth/register", {
         name: formData.username,
         email: formData.email,
         password: formData.password,
-        dp,
       });
       const data = response.data as { message: string; token: string; user: AuthUser };
-      makeToast("success", data.message);
-      // Auto-login: store token and user, then go straight to dashboard
+      let user = data.user;
       localStorage.setItem("CC_Token", data.token);
-      localStorage.setItem("CC_User", JSON.stringify(data.user));
+
+      if (dp) {
+        try {
+          const blob = await (await fetch(dp)).blob();
+          const fd = new FormData();
+          fd.append("file", blob, "avatar.png");
+          const uploaded = await api.post<{ url: string }>("/api/v1/uploads", fd, {
+            headers: { "Content-Type": "multipart/form-data" },
+          });
+          const patched = await api.patch<AuthUser>("/api/v1/users/me", { dp: uploaded.data.url });
+          user = patched.data;
+        } catch {
+          // Account was created either way — avatar can still be set from Profile.
+          makeToast("warning", "Account created, but the avatar upload failed — add it from your profile");
+        }
+      }
+
+      makeToast("success", data.message);
+      // Auto-login: store user, then go straight to dashboard
+      localStorage.setItem("CC_User", JSON.stringify(user));
       navigate("/");
     } catch (err) {
-      const message = (err as { response?: { data?: { message?: string } } })?.response?.data
-        ?.message;
-      makeToast("error", message || "An error occurred. Please try again.");
+      makeToast("error", apiErrorMessage(err, "An error occurred. Please try again."));
     } finally {
       setIsLoading(false);
     }

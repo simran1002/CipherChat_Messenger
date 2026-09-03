@@ -30,6 +30,11 @@ interface MentionMember {
   dp?: string;
 }
 
+/** Raw member row (ChatroomDtos.MemberView) — user is UserView.Summary {id, name, dp}. */
+interface RawMemberRow {
+  user: { id: string; name: string; dp?: string };
+}
+
 /**
  * Find an in-progress "@query" immediately before the cursor.
  * The "@" must be at the start of the text or preceded by whitespace.
@@ -146,9 +151,13 @@ const MessageInput = ({
     if (!chatroomId || membersFetchedRef.current || membersLoadingRef.current) return;
     membersLoadingRef.current = true;
     try {
-      const res = await api.get(`/chatroom/${chatroomId}/members`);
-      const rows = (res.data as { members?: Array<{ user: MentionMember }> }).members ?? [];
-      setMentionMembers(rows.map((m) => m.user).filter((u): u is MentionMember => Boolean(u && u._id && u.name)));
+      const res = await api.get(`/api/v1/chatrooms/${chatroomId}/members`);
+      const rows = (res.data as { members?: RawMemberRow[] }).members ?? [];
+      setMentionMembers(
+        rows
+          .map((m): MentionMember | null => (m.user ? { _id: m.user.id, name: m.user.name, dp: m.user.dp } : null))
+          .filter((u): u is MentionMember => Boolean(u && u._id && u.name))
+      );
       membersFetchedRef.current = true;
     } catch {
       // Autocomplete is best-effort — fail silently, retry on next "@"
@@ -229,7 +238,7 @@ const MessageInput = ({
     if (value.trim().length > 15) {
       toneTimerRef.current = setTimeout(async () => {
         try {
-          const res = await api.post("/ai/tone", { message: value.trim() });
+          const res = await api.post("/api/v1/ai/tone", { message: value.trim() });
           if (res.data.tone && res.data.tone !== "neutral") setToneInfo(res.data);
           else setToneInfo(null);
         } catch {
@@ -258,7 +267,7 @@ const MessageInput = ({
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const res = await api.post("/upload", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      const res = await api.post("/api/v1/uploads", fd, { headers: { "Content-Type": "multipart/form-data" } });
       const { url, fileName, mimeType, fileSize } = res.data;
       let type: OutgoingFilePayload["type"] = "file";
       if (mimeType.startsWith("image/")) type = "image";
@@ -278,7 +287,7 @@ const MessageInput = ({
     try {
       const fd = new FormData();
       fd.append("file", blob, "voice-message.webm");
-      const res = await api.post("/upload", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      const res = await api.post("/api/v1/uploads", fd, { headers: { "Content-Type": "multipart/form-data" } });
       const { url, fileSize } = res.data;
       onSendVoice({ fileUrl: url, fileName: "Voice message", mimeType: "audio/webm", fileSize, type: "audio" });
     } catch {

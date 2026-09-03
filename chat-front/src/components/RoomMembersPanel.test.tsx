@@ -7,6 +7,10 @@ import { makeToast } from "../utils/toast";
 vi.mock("../services/api", () => ({
   default: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() },
   getApiUrl: () => "http://localhost:8000",
+  apiErrorMessage: (err: unknown, fallback: string) =>
+    (err as { response?: { data?: { detail?: string; message?: string } } })?.response?.data?.detail ||
+    (err as { response?: { data?: { detail?: string; message?: string } } })?.response?.data?.message ||
+    fallback,
 }));
 
 vi.mock("../utils/toast", () => ({ makeToast: vi.fn() }));
@@ -53,23 +57,24 @@ const patchMock = api.patch as unknown as Mock<ApiFn>;
 const toastMock = vi.mocked(makeToast);
 
 const ROOM = "room-1";
-const MEMBERS_URL = `/chatroom/${ROOM}/members`;
+const MEMBERS_URL = `/api/v1/chatrooms/${ROOM}/members`;
 
 type RoomRole = "owner" | "admin" | "member";
 
-const OWNER = { _id: "u-owner", name: "Olivia Owner", email: "olivia@example.com" };
-const ADMIN = { _id: "u-admin", name: "Adam Admin" };
-const MEMBER = { _id: "u-member", name: "Molly Member", isOnline: true };
-const OUTSIDER = { _id: "u-new", name: "Nina New", email: "nina@example.com" };
+const OWNER = { id: "u-owner", name: "Olivia Owner", email: "olivia@example.com" };
+const ADMIN = { id: "u-admin", name: "Adam Admin" };
+const MEMBER = { id: "u-member", name: "Molly Member" };
+const OUTSIDER = { id: "u-new", name: "Nina New", email: "nina@example.com" };
 
-const ID_BY_ROLE: Record<RoomRole, string> = { owner: OWNER._id, admin: ADMIN._id, member: MEMBER._id };
+const ID_BY_ROLE: Record<RoomRole, string> = { owner: OWNER.id, admin: ADMIN.id, member: MEMBER.id };
 
 function membersPayload(myRole: RoomRole) {
   return {
+    // MemberView: summary user + email + isOnline alongside the role
     members: [
-      { user: OWNER, role: "owner" },
-      { user: ADMIN, role: "admin" },
-      { user: MEMBER, role: "member" },
+      { user: { id: OWNER.id, name: OWNER.name }, email: OWNER.email, isOnline: true, role: "owner" },
+      { user: ADMIN, email: "adam@example.com", isOnline: false, role: "admin" },
+      { user: MEMBER, email: "molly@example.com", isOnline: false, role: "member" },
     ],
     isPrivate: true,
     myRole,
@@ -81,7 +86,7 @@ function setup(myRole: RoomRole, props: Partial<Parameters<typeof RoomMembersPan
   localStorage.setItem("CC_User", JSON.stringify({ id: ID_BY_ROLE[myRole] }));
   getMock.mockImplementation(async (url) => {
     if (url === MEMBERS_URL) return { data: membersPayload(myRole) };
-    if (url === "/dm/users") return { data: [OWNER, ADMIN, MEMBER, OUTSIDER] };
+    if (url === "/api/v1/users") return { data: [OWNER, ADMIN, MEMBER, OUTSIDER] };
     throw new Error(`unexpected GET ${url}`);
   });
   postMock.mockResolvedValue({ data: {} });
@@ -104,7 +109,7 @@ describe("RoomMembersPanel", () => {
   });
 
   it("renders nothing and fetches nothing while closed", () => {
-    localStorage.setItem("CC_User", JSON.stringify({ id: OWNER._id }));
+    localStorage.setItem("CC_User", JSON.stringify({ id: OWNER.id }));
     const { container } = render(
       <RoomMembersPanel chatroomId={ROOM} isOpen={false} onClose={vi.fn()} />
     );
@@ -112,13 +117,15 @@ describe("RoomMembersPanel", () => {
     expect(getMock).not.toHaveBeenCalled();
   });
 
-  it("renders the member list from GET /chatroom/:id/members with names and role badges", async () => {
+  it("renders the member list from GET /api/v1/chatrooms/:id/members with names and role badges", async () => {
     setup("member");
 
     expect(await screen.findByText("Olivia Owner")).toBeInTheDocument();
     expect(screen.getByText("Adam Admin")).toBeInTheDocument();
     expect(screen.getByText("Molly Member")).toBeInTheDocument();
+    // Email and online state come from MemberView (not the user summary)
     expect(screen.getByText("olivia@example.com")).toBeInTheDocument();
+    expect(screen.getAllByLabelText("online")).toHaveLength(1);
 
     // Badge text is the raw role (uppercased only via CSS)
     expect(screen.getByText("owner")).toBeInTheDocument();
@@ -180,7 +187,7 @@ describe("RoomMembersPanel", () => {
     fireEvent.change(screen.getByLabelText("Change role for Molly Member"), { target: { value: "admin" } });
 
     await waitFor(() =>
-      expect(patchMock).toHaveBeenCalledWith(`/chatroom/${ROOM}/members/${MEMBER._id}`, { role: "admin" })
+      expect(patchMock).toHaveBeenCalledWith(`/api/v1/chatrooms/${ROOM}/members/${MEMBER.id}`, { role: "admin" })
     );
     await waitFor(() => expect(membersCalls()).toHaveLength(2));
     expect(toastMock).toHaveBeenCalledWith("success", "Role updated");
@@ -198,7 +205,7 @@ describe("RoomMembersPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Transfer" }));
 
     await waitFor(() =>
-      expect(patchMock).toHaveBeenCalledWith(`/chatroom/${ROOM}/members/${ADMIN._id}`, { role: "owner" })
+      expect(patchMock).toHaveBeenCalledWith(`/api/v1/chatrooms/${ROOM}/members/${ADMIN.id}`, { role: "owner" })
     );
     await waitFor(() => expect(screen.queryByText("Transfer ownership?")).not.toBeInTheDocument());
     expect(toastMock).toHaveBeenCalledWith("success", "Ownership transferred to Adam Admin");
@@ -234,7 +241,7 @@ describe("RoomMembersPanel", () => {
 
     // Directory is lazy-loaded on first open; existing members are filtered out
     expect(await screen.findByText("Nina New")).toBeInTheDocument();
-    expect(getMock).toHaveBeenCalledWith("/dm/users");
+    expect(getMock).toHaveBeenCalledWith("/api/v1/users");
     // Exactly one invitable row (the three existing members are filtered out)
     const inviteButtons = screen.getAllByRole("button", { name: "Invite" });
     expect(inviteButtons).toHaveLength(1);
@@ -243,7 +250,7 @@ describe("RoomMembersPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Invite" }));
 
     await waitFor(() =>
-      expect(postMock).toHaveBeenCalledWith(`/chatroom/${ROOM}/invite`, { userId: OUTSIDER._id })
+      expect(postMock).toHaveBeenCalledWith(`/api/v1/chatrooms/${ROOM}/invite`, { userId: OUTSIDER.id })
     );
     await waitFor(() => expect(membersCalls()).toHaveLength(2));
     expect(toastMock).toHaveBeenCalledWith("success", "Nina New invited");
@@ -252,10 +259,10 @@ describe("RoomMembersPanel", () => {
   it("invite search filters the directory by name/email", async () => {
     getMock.mockImplementation(async (url) => {
       if (url === MEMBERS_URL) return { data: { members: [{ user: OWNER, role: "owner" }], myRole: "owner" } };
-      if (url === "/dm/users") return { data: [OWNER, ADMIN, OUTSIDER] };
+      if (url === "/api/v1/users") return { data: [OWNER, ADMIN, OUTSIDER] };
       throw new Error(`unexpected GET ${url}`);
     });
-    localStorage.setItem("CC_User", JSON.stringify({ id: OWNER._id }));
+    localStorage.setItem("CC_User", JSON.stringify({ id: OWNER.id }));
     render(<RoomMembersPanel chatroomId={ROOM} isOpen onClose={vi.fn()} />);
     await screen.findByText("Olivia Owner");
 
@@ -271,13 +278,13 @@ describe("RoomMembersPanel", () => {
     expect(screen.getByText("No users to invite")).toBeInTheDocument();
   });
 
-  it("leave: POSTs /chatroom/:id/leave then calls onClose and onLeft", async () => {
+  it("leave: POSTs /api/v1/chatrooms/:id/leave then calls onClose and onLeft", async () => {
     const { onClose, onLeft } = setup("member");
     await screen.findByText("Olivia Owner");
 
     fireEvent.click(screen.getByRole("button", { name: /leave room/i }));
 
-    await waitFor(() => expect(postMock).toHaveBeenCalledWith(`/chatroom/${ROOM}/leave`));
+    await waitFor(() => expect(postMock).toHaveBeenCalledWith(`/api/v1/chatrooms/${ROOM}/leave`));
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(onLeft).toHaveBeenCalledTimes(1);
     expect(toastMock).toHaveBeenCalledWith("success", "You left the room");
@@ -305,7 +312,7 @@ describe("RoomMembersPanel", () => {
   });
 
   it("toasts when the member list fails to load", async () => {
-    localStorage.setItem("CC_User", JSON.stringify({ id: OWNER._id }));
+    localStorage.setItem("CC_User", JSON.stringify({ id: OWNER.id }));
     getMock.mockRejectedValue(new Error("network down"));
     render(<RoomMembersPanel chatroomId={ROOM} isOpen onClose={vi.fn()} />);
 

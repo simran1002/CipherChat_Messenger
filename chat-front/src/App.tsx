@@ -1,6 +1,6 @@
 import { lazy, Suspense, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
-import { io } from "socket.io-client";
+import { createStompSocket } from "./services/stompSocket";
 import Header from "./components/Header";
 import Toaster from "./components/Toaster";
 import { ThemeProvider } from "./contexts/ThemeContext";
@@ -17,13 +17,6 @@ const ChatroomPage = lazy(() => import("./Pages/ChatroomPage"));
 const DirectMessagesPage = lazy(() => import("./Pages/DirectMessagesPage"));
 const ProfilePage = lazy(() => import("./Pages/ProfilePage"));
 const MetricsDashboardPage = lazy(() => import("./Pages/MetricsDashboardPage"));
-
-// Baked at build time. "websocket" alone (the least_conn LB profile) drops the
-// HTTP long-polling fallback — the one thing that forces sticky sessions.
-const SOCKET_TRANSPORTS = (import.meta.env.VITE_SOCKET_TRANSPORTS || "websocket,polling")
-  .split(",")
-  .map((t) => t.trim())
-  .filter((t): t is "websocket" | "polling" => t === "websocket" || t === "polling");
 
 // Hoisted out of App() — an inline definition re-created the component type on
 // every render and remounted the whole protected subtree.
@@ -53,13 +46,12 @@ function App() {
   const setupSocket = useCallback(() => {
     const token = localStorage.getItem("CC_Token");
     if (token && !socketRef.current) {
-      const newSocket: AppSocket = io(getSocketUrl(), {
-        // auth payload — not the query string, which proxies log. The callback
-        // form re-reads storage on every reconnect attempt, so a token rotated
-        // by the silent-refresh interceptor is picked up automatically.
-        auth: (cb) => cb({ token: localStorage.getItem("CC_Token") }),
-        transports: SOCKET_TRANSPORTS,
-      });
+      // The STOMP client re-reads CC_Token from storage on every (re)connect
+      // attempt (see stompSocket.ts's beforeConnect), so a token rotated by
+      // the silent-refresh interceptor is picked up automatically — no auth
+      // payload to pass here. `createStompSocket` activates the client and
+      // it auto-reconnects (reconnectDelay) on its own after a drop.
+      const newSocket: AppSocket = createStompSocket(getSocketUrl());
 
       newSocket.on("connect", () => {
         window.makeToast?.("success", "Connected to chat server");
@@ -73,20 +65,12 @@ function App() {
         heartbeatSvc.stop();
       });
 
-      newSocket.on("disconnect", (reason) => {
-        if (reason === "io server disconnect") {
-          newSocket.connect();
-        }
-      });
-
       newSocket.on("connect_error", (err) => {
         console.error("Socket connection error:", err.message);
-        // Expired access token at handshake — refresh, then let the auth
-        // callback pick up the new token on the next connect attempt.
+        // Expired access token at the CONNECT frame — refresh now so the
+        // client's next (automatic) reconnect attempt picks up a good token.
         if (err.message === "Invalid token") {
-          void refreshAccessToken().then((t) => {
-            if (t) newSocket.connect();
-          });
+          void refreshAccessToken();
         }
       });
 
@@ -97,7 +81,7 @@ function App() {
 
   const handleLogout = useCallback(() => {
     // Revoke the refresh session server-side (best-effort)
-    void api.post("/user/logout", null, { withCredentials: true }).catch(() => {});
+    void api.post("/api/v1/auth/logout", null, { withCredentials: true }).catch(() => {});
     heartbeatSvc.stop();
     if (socketRef.current) {
       socketRef.current.disconnect();

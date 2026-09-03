@@ -12,8 +12,10 @@ export function getCurrentUserId(): string | null {
   try {
     const payloadPart = token.split(".")[1];
     if (!payloadPart) return null;
-    const payload = JSON.parse(atob(payloadPart)) as { id?: string };
-    return payload.id ?? null;
+    // The Java backend's access token puts the user id in the standard `sub`
+    // claim (JwtService.issueAccessToken), not a custom `id` claim.
+    const payload = JSON.parse(atob(payloadPart)) as { sub?: string };
+    return payload.sub ?? null;
   } catch {
     return null;
   }

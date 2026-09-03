@@ -6,7 +6,7 @@ import {
   DocumentTextIcon,
   ChatBubbleLeftEllipsisIcon,
 } from "@heroicons/react/24/outline";
-import api from "../services/api";
+import api, { apiErrorMessage } from "../services/api";
 import { makeToast } from "../utils/toast";
 
 interface AICoPilotProps {
@@ -26,13 +26,11 @@ const AICoPilot = ({ chatroomId, onSelectSuggestion, isOpen, onClose }: AICoPilo
     setLoadingSummary(true);
     setSummary("");
     try {
-      const res = await api.post(`/ai/${chatroomId}/summarize`, { limit: 50 });
+      const res = await api.post(`/api/v1/ai/rooms/${chatroomId}/summarize`, { limit: 50 });
       setSummary(res.data.summary);
     } catch (err) {
-      const msg =
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
-        "AI summarization unavailable";
-      setSummary(`⚠️ ${msg.includes("ANTHROPIC_API_KEY") ? "Add your ANTHROPIC_API_KEY to chat-back/.env to enable AI features." : msg}`);
+      const msg = apiErrorMessage(err, "AI summarization unavailable");
+      setSummary(`⚠️ ${msg.includes("ANTHROPIC_API_KEY") ? "Set the ANTHROPIC_API_KEY environment variable on the backend to enable AI features." : msg}`);
       makeToast("error", "AI unavailable");
     } finally {
       setLoadingSummary(false);
@@ -43,17 +41,15 @@ const AICoPilot = ({ chatroomId, onSelectSuggestion, isOpen, onClose }: AICoPilo
     setLoadingSuggestions(true);
     setSuggestions([]);
     try {
-      const res = await api.post(`/ai/${chatroomId}/suggest-reply`);
+      const res = await api.post(`/api/v1/ai/rooms/${chatroomId}/suggest-reply`);
       setSuggestions(res.data.suggestions);
     } catch (err) {
       // Surface the server's reason (e.g. AI not configured) instead of a generic toast
-      const msg =
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
-        "Could not generate suggestions";
+      const msg = apiErrorMessage(err, "Could not generate suggestions");
       makeToast(
         "error",
         msg.includes("ANTHROPIC_API_KEY")
-          ? "AI features need ANTHROPIC_API_KEY in chat-back/.env"
+          ? "AI features need the ANTHROPIC_API_KEY environment variable set on the backend"
           : msg
       );
     } finally {

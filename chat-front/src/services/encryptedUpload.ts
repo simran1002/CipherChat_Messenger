@@ -21,7 +21,7 @@ interface PresignResponse {
  */
 export async function uploadEncryptedBlob(blob: Blob): Promise<string> {
   try {
-    const { data } = await api.post<PresignResponse>("/upload/encrypted/presign", {
+    const { data } = await api.post<PresignResponse>("/api/v1/uploads/encrypted/presign", {
       size: blob.size,
     });
     const put = await fetch(data.uploadUrl, {
@@ -34,7 +34,7 @@ export async function uploadEncryptedBlob(blob: Blob): Promise<string> {
   } catch {
     const fd = new FormData();
     fd.append("file", blob, "blob.bin"); // blob type is application/octet-stream
-    const res = await api.post<{ url: string }>("/upload/encrypted", fd);
+    const res = await api.post<{ url: string }>("/api/v1/uploads/encrypted", fd);
     return res.data.url;
   }
 }

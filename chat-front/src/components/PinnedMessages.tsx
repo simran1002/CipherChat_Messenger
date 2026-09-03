@@ -4,14 +4,15 @@ import { MapPinIcon, ChevronDownIcon, ChevronUpIcon } from "@heroicons/react/24/
 import { XMarkIcon } from "@heroicons/react/24/outline";
 
 /**
- * Row shape returned by GET /chatroom/:id/pinned — unlike ChatMessage,
- * the sender comes back as a populated `user` object rather than flat
- * name/userId fields, so this stays a local type.
+ * Row shape this component renders. GET /api/v1/chatrooms/:id/pinned returns
+ * ChatroomDtos.MessageView rows — flat `name`/`userId` fields (no nested
+ * `user`), same shape ChatroomPage already normalizes history rows into
+ * (see mapRawMessage), so pinned rows are just `ChatMessage`s.
  */
 export interface PinnedMessageItem {
   _id: string;
   message?: string | null;
-  user?: { _id?: string; name?: string } | null;
+  name?: string;
 }
 
 interface PinnedMessagesProps {
@@ -58,7 +59,7 @@ const PinnedMessages = ({ messages, onUnpin }: PinnedMessagesProps) => {
                 className="flex items-center gap-2 px-4 py-1.5 border-t border-gray-700/30"
               >
                 <span className="text-xs text-violet-400 shrink-0">
-                  {msg.user?.name}:
+                  {msg.name}:
                 </span>
                 <span className="text-sm text-gray-300 truncate flex-1">
                   {msg.message?.slice(0, 80)}
