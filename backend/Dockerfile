@@ -5,6 +5,7 @@
 FROM eclipse-temurin:21-jdk-alpine AS build
 WORKDIR /workspace
 COPY mvnw pom.xml ./
+RUN chmod +x mvnw
 COPY .mvn .mvn
 RUN --mount=type=cache,target=/root/.m2 ./mvnw -q -B dependency:go-offline
 COPY src src

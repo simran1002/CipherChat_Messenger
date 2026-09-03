@@ -46,14 +46,14 @@ jobs:
         run: ./mvnw -B verify
       - name: Upload coverage report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: jacoco-report
           path: backend/target/site/jacoco
           retention-days: 14
       - name: Upload test reports
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: surefire-reports
           path: |
@@ -79,7 +79,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test -- --run
       - run: npm run build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: frontend-dist
           path: chat-front/dist
@@ -92,7 +92,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Trivy filesystem scan (Maven + npm lockfiles)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.33.1
         with:
           scan-type: fs
           scan-ref: .
@@ -133,7 +133,7 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,scope=${{ matrix.name }},mode=max
       - name: Image vulnerability scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.33.1
         with:
           image-ref: ${{ matrix.image }}:${{ github.sha }}
           severity: CRITICAL,HIGH
