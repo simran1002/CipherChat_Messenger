@@ -120,6 +120,9 @@ jobs:
           format: sarif
           output: trivy-fs.sarif
           exit-code: "1"
+          # For SARIF the action otherwise reports every severity and exit-code 1 then fires on MEDIUM/LOW;
+          # the Security tab still receives HIGH/CRITICAL, and the gate matches the image scans.
+          limit-severities-for-sarif: true
       - uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
