@@ -59,7 +59,11 @@ services:
         value: local                            # demo only; set s3 + S3_* for anything durable
       - key: UPLOAD_DIR
         value: /data/uploads
-      - key: ANTHROPIC_API_KEY
+      - key: AI_BASE_URL
+        sync: false                             # any chat-completions endpoint; blank disables AI
+      - key: AI_MODEL
+        sync: false
+      - key: AI_API_KEY
         sync: false
       - key: LOG_FORMAT
         value: ecs

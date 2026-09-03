@@ -146,7 +146,7 @@ The unique index on `(conversation_id, sender_id, envelope->>'sessionId', (envel
 | Real-time | STOMP over WebSocket, simple broker, Redis cross-pod bridge | no polling fallback → no sticky sessions |
 | Security | Spring Security, HS256 JWT (15 min), rotating hashed refresh tokens, BCrypt(12), TOTP 2FA, RBAC | [SECURITY.md](docs/SECURITY.md) |
 | Attachments | `local` or S3/MinIO driver; presigned PUT for encrypted blobs | ciphertext never transits the app |
-| Resilience | Resilience4j (Anthropic client), Kafka DLT, rate limiter fail-open | degrade, don't cascade |
+| Resilience | Resilience4j (LLM client), Kafka DLT, rate limiter fail-open | degrade, don't cascade |
 | Observability | Actuator, Micrometer/Prometheus, ECS JSON logs, `X-Request-Id` | content-free by construction |
 | Frontend | React 19 + Vite + TypeScript + Tailwind; E2EE client in `src/crypto` | unchanged pages; one STOMP adapter |
 | Delivery | Docker (layered, non-root), Compose (+ scale-out), Kubernetes (HPA/PDB/probes), Terraform (AWS), Render blueprint, GitHub Actions | [DEPLOYMENT.md](docs/DEPLOYMENT.md) |
@@ -240,7 +240,7 @@ backend/        Java 21 · Spring Boot 4 modular monolith (Maven wrapper include
     gateway/       STOMP endpoint · Redis fan-out · presence gateway
     presence/      online registry · typing · roster
     notification/ audit/ analytics/   Kafka consumers + read APIs
-    upload/ ai/    storage drivers · Anthropic client behind a circuit breaker
+    upload/ ai/    storage drivers · LLM client (any chat-completions endpoint) behind a circuit breaker
   src/main/resources/db/migration/   Flyway schema
   src/test/java/ unit · Modulith boundary · Testcontainers *IT
 chat-front/     React 19 + Vite + TypeScript (E2EE client in src/crypto, STOMP adapter in src/services/stompSocket.ts)

@@ -68,7 +68,7 @@ Virtual threads (`spring.threads.virtual.enabled`) make blocking JDBC/Redis call
 - STOMP message size limits (64 KB inbound) and a bounded send buffer per session; a slow consumer is disconnected rather than allowed to grow the heap.
 - Presence roster broadcast is throttled (leading + trailing edge, 1 s) and bounded (first 100 users + total) — a burst of 500 connects is two broadcasts, not 500 × N frames.
 - Kafka consumers: retries with back-off then DLT; a poison record never blocks a partition.
-- Anthropic calls sit behind a circuit breaker; an LLM outage degrades three endpoints to fast 503s and holds no threads.
+- LLM calls sit behind a circuit breaker; an LLM outage degrades three endpoints to fast 503s and holds no threads.
 
 ## Known limits (honest list)
 

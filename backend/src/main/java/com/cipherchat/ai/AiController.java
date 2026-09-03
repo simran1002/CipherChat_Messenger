@@ -57,14 +57,14 @@ public class AiController {
     public record ToneResult(String tone, String suggestion) {
     }
 
-    private final AnthropicClient ai;
+    private final LlmClient ai;
     private final MessageService messages;
     private final RedisRateLimiter rateLimiter;
     private final ObjectMapper json;
     private final int perMinute;
 
-    public AiController(AnthropicClient ai, MessageService messages, RedisRateLimiter rateLimiter, ObjectMapper json,
-                        AnthropicClient.Properties props) {
+    public AiController(LlmClient ai, MessageService messages, RedisRateLimiter rateLimiter, ObjectMapper json,
+                        LlmClient.Properties props) {
         this.ai = ai;
         this.messages = messages;
         this.rateLimiter = rateLimiter;

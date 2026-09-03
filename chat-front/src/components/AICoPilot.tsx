@@ -30,7 +30,7 @@ const AICoPilot = ({ chatroomId, onSelectSuggestion, isOpen, onClose }: AICoPilo
       setSummary(res.data.summary);
     } catch (err) {
       const msg = apiErrorMessage(err, "AI summarization unavailable");
-      setSummary(`⚠️ ${msg.includes("ANTHROPIC_API_KEY") ? "Set the ANTHROPIC_API_KEY environment variable on the backend to enable AI features." : msg}`);
+      setSummary(`⚠️ ${msg}`);
       makeToast("error", "AI unavailable");
     } finally {
       setLoadingSummary(false);
@@ -46,12 +46,7 @@ const AICoPilot = ({ chatroomId, onSelectSuggestion, isOpen, onClose }: AICoPilo
     } catch (err) {
       // Surface the server's reason (e.g. AI not configured) instead of a generic toast
       const msg = apiErrorMessage(err, "Could not generate suggestions");
-      makeToast(
-        "error",
-        msg.includes("ANTHROPIC_API_KEY")
-          ? "AI features need the ANTHROPIC_API_KEY environment variable set on the backend"
-          : msg
-      );
+      makeToast("error", msg);
     } finally {
       setLoadingSuggestions(false);
     }
@@ -138,7 +133,6 @@ const AICoPilot = ({ chatroomId, onSelectSuggestion, isOpen, onClose }: AICoPilo
               </AnimatePresence>
             </div>
 
-            <p className="text-[10px] text-gray-600 text-center">Powered by Claude Haiku</p>
           </div>
         </motion.div>
       )}

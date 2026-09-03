@@ -30,8 +30,8 @@ const PATTERNS: SensitivePattern[] = [
   },
   {
     type: "API key",
-    // Labeled keys (api_key=…) OR bare well-known key shapes: OpenAI/Anthropic
-    // sk-…, GitHub gh[pousr]_…, AWS AKIA…, Slack xox…, generic Bearer tokens
+    // Labeled keys (api_key=…) OR bare well-known key shapes: sk-/pk- prefixed
+    // provider keys, GitHub gh[pousr]_…, AWS AKIA…, Slack xox…, generic Bearer tokens
     regex:
       /(?:api[_-]?key|secret[_-]?key|access[_-]?token)\s*[:=]\s*\S{16,}|\b(?:sk|pk)-[A-Za-z0-9_-]{16,}\b|\bgh[pousr]_[A-Za-z0-9]{20,}\b|\bAKIA[0-9A-Z]{16}\b|\bxox[baprs]-[A-Za-z0-9-]{10,}\b|\bBearer\s+[A-Za-z0-9._~+/=-]{20,}/i,
     suggestion: "API keys should never be shared in chat — revoke and rotate it immediately.",

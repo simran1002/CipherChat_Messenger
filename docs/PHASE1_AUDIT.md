@@ -4,7 +4,7 @@ Snapshot taken before the Java rewrite. Kept as the record of *why* each change 
 
 ## Architecture as found
 
-- `chat-back/` — Node 20/22, Express 4, TypeScript (recently migrated from CommonJS), Socket.IO 4, Mongoose/MongoDB Atlas, optional Redis (`ioredis` behind interfaces, in-memory fallback), `prom-client` metrics, Anthropic SDK for room AI features, multer uploads (local disk or S3), otplib-free self-implemented TOTP, Ed25519 verification via `@noble/curves`.
+- `chat-back/` — Node 20/22, Express 4, TypeScript (recently migrated from CommonJS), Socket.IO 4, Mongoose/MongoDB Atlas, optional Redis (`ioredis` behind interfaces, in-memory fallback), `prom-client` metrics, an LLM SDK for room AI features, multer uploads (local disk or S3), otplib-free self-implemented TOTP, Ed25519 verification via `@noble/curves`.
 - `chat-front/` — React 19 + Vite + TypeScript + Tailwind; pages talk to `/user`, `/chatroom`, `/dm`, `/keys`, `/upload`, `/ai`, `/presence`, `/analytics`; Socket.IO client singleton via context; E2EE implemented client-side (`src/crypto`), offline queue in IndexedDB.
 - Deploy: Render web service configured in the dashboard (no blueprint), MongoDB Atlas M0, Redis optional; Docker/Compose files existed for local scale-out demos.
 

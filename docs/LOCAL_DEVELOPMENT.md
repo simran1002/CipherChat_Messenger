@@ -115,7 +115,7 @@ docker run --rm -i -e BASE_URL=http://host.docker.internal:8080 grafana/k6 run -
 | `STORAGE_DRIVER` | local | `local` \| `s3` |
 | `UPLOAD_DIR` / `PUBLIC_BASE_URL` | `./data/uploads` / `http://localhost:8080` | local driver |
 | `S3_BUCKET` / `AWS_REGION` / `S3_ENDPOINT` / `S3_PUBLIC_BASE_URL` | — | s3 driver (credentials from the AWS default chain) |
-| `ANTHROPIC_API_KEY` / `AI_BASE_URL` | — | AI features; absent → endpoints answer `503 ai_not_configured` |
+| `AI_BASE_URL` / `AI_MODEL` / `AI_API_KEY` | — | AI features via any chat-completions endpoint (Ollama, vLLM, hosted); base URL or model absent → endpoints answer `503 ai_not_configured` |
 | `LOG_FORMAT` | plain | `ecs` for JSON logs |
 | `LOG_LEVEL` | INFO | `com.cipherchat` logger |
 | `SPRING_PROFILES_ACTIVE` | — | `prod` tightens secrets/cookies |

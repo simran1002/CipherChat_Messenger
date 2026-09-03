@@ -158,15 +158,18 @@ cipherchat:
       public-base-url: ${S3_PUBLIC_BASE_URL:}   # CDN / bucket website origin; blank = virtual-hosted S3 URL
       presign-ttl: 5m
   ai:
-    api-key: ${ANTHROPIC_API_KEY:}
-    base-url: ${AI_BASE_URL:https://api.anthropic.com}   # self-hosters point this at an in-org gateway
-    model: claude-haiku-4-5-20251001
+    # Any chat-completions-compatible endpoint (self-hosted Ollama / vLLM / LM Studio, or a hosted
+    # provider). Both base-url and model must be set for the AI endpoints to be enabled; the key is
+    # optional because self-hosted servers usually need none.
+    base-url: ${AI_BASE_URL:}
+    model: ${AI_MODEL:}
+    api-key: ${AI_API_KEY:}
     requests-per-minute: 20
 
 resilience4j:
   circuitbreaker:
     instances:
-      anthropic:
+      llm:
         sliding-window-type: COUNT_BASED
         sliding-window-size: 10
         minimum-number-of-calls: 5
@@ -176,7 +179,7 @@ resilience4j:
         register-health-indicator: true
   retry:
     instances:
-      anthropic:
+      llm:
         max-attempts: 2
         wait-duration: 500ms
         retry-exceptions:

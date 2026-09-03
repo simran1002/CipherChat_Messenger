@@ -22,6 +22,7 @@ data:
   AWS_REGION: "us-east-1"
   S3_PUBLIC_BASE_URL: "https://uploads.chat.example.com"   # CloudFront in front of the bucket
   PUBLIC_BASE_URL: "https://api.chat.example.com"
-  AI_BASE_URL: "https://api.anthropic.com"
+  AI_BASE_URL: "http://llm-gateway.cipherchat.svc.cluster.local:8000"   # any chat-completions server
+  AI_MODEL: "REPLACE-ME"
   LOG_FORMAT: "ecs"
   LOG_LEVEL: "INFO"

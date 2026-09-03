@@ -21,51 +21,66 @@ import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.retry.annotation.Retry;
 
 /**
- * Minimal Messages-API client over {@link RestClient} — no SDK, one
- * endpoint, explicit timeouts. Resilience4j wraps it: retry once on
- * transport/5xx, then the circuit opens after 50% failures in the last 10
- * calls and every caller gets an immediate, cheap 503 for 30 s.
+ * Minimal chat-completions client over {@link RestClient} — no SDK, one
+ * endpoint ({@code POST {AI_BASE_URL}/v1/chat/completions}), explicit
+ * timeouts. The wire format is the de-facto standard that self-hosted
+ * servers (Ollama, vLLM, LM Studio, llama.cpp) and most hosted providers
+ * speak, so an operator points {@code AI_BASE_URL} at whatever they run.
+ * Resilience4j wraps it: retry once on transport/5xx, then the circuit
+ * opens after 50% failures in the last 10 calls and every caller gets an
+ * immediate, cheap 503 for 30 s.
  */
 @Component
-@EnableConfigurationProperties(AnthropicClient.Properties.class)
-public class AnthropicClient {
+@EnableConfigurationProperties(LlmClient.Properties.class)
+public class LlmClient {
 
-    private static final Logger log = LoggerFactory.getLogger(AnthropicClient.class);
-    static final String CIRCUIT = "anthropic";
+    private static final Logger log = LoggerFactory.getLogger(LlmClient.class);
+    static final String CIRCUIT = "llm";
 
     @ConfigurationProperties("cipherchat.ai")
-    public record Properties(String apiKey, String baseUrl, String model, int requestsPerMinute) {
+    public record Properties(String baseUrl, String model, String apiKey, int requestsPerMinute) {
         boolean configured() {
+            return baseUrl != null && !baseUrl.isBlank() && model != null && !model.isBlank();
+        }
+
+        boolean hasApiKey() {
             return apiKey != null && !apiKey.isBlank();
         }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record Response(List<Block> content) {
+    record Response(List<Choice> choices) {
         @JsonIgnoreProperties(ignoreUnknown = true)
-        record Block(String type, String text) {
+        record Choice(Message message) {
+        }
+
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        record Message(String content) {
         }
 
         String firstText() {
-            if (content == null) return "";
-            return content.stream().filter(b -> "text".equals(b.type()) && b.text() != null)
-                    .map(Block::text).findFirst().orElse("");
+            if (choices == null) return "";
+            return choices.stream()
+                    .filter(c -> c.message() != null && c.message().content() != null)
+                    .map(c -> c.message().content()).findFirst().orElse("");
         }
     }
 
     private final Properties props;
     private final RestClient http;
 
-    public AnthropicClient(Properties props) {
+    public LlmClient(Properties props) {
         this.props = props;
         var factory = new JdkClientHttpRequestFactory();
         factory.setReadTimeout(Duration.ofSeconds(25));
-        this.http = RestClient.builder()
-                .baseUrl(props.baseUrl().replaceAll("/+$", ""))
+        var builder = RestClient.builder()
+                .baseUrl(props.configured() ? props.baseUrl().replaceAll("/+$", "") : "http://ai-not-configured.invalid")
                 .requestFactory(factory)
-                .defaultHeader("anthropic-version", "2023-06-01")
-                .defaultHeader("content-type", "application/json")
-                .build();
+                .defaultHeader("content-type", "application/json");
+        if (props.hasApiKey()) {
+            builder.defaultHeader("authorization", "Bearer " + props.apiKey());
+        }
+        this.http = builder.build();
     }
 
     boolean configured() {
@@ -76,10 +91,10 @@ public class AnthropicClient {
     @CircuitBreaker(name = CIRCUIT, fallbackMethod = "unavailable")
     public String complete(String prompt, int maxTokens) {
         if (!props.configured()) {
-            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "ai_not_configured", "ANTHROPIC_API_KEY not configured. Add it to the environment to use AI features.");
+            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "ai_not_configured",
+                    "AI assist is not configured. Set AI_BASE_URL and AI_MODEL (and AI_API_KEY if the provider needs one) on the backend.");
         }
-        Response r = http.post().uri("/v1/messages")
-                .header("x-api-key", props.apiKey())
+        Response r = http.post().uri("/v1/chat/completions")
                 .body(Map.of(
                         "model", props.model(),
                         "max_tokens", maxTokens,
