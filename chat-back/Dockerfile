@@ -1,5 +1,10 @@
+# Node 22 (current LTS) — a transitive dep (otplib -> @noble/hashes) declares
+# engines.node >= 20.19.0; node:20-alpine is a moving tag that can resolve
+# below that floor. Pinned to the major that satisfies every engine range in
+# the dependency tree rather than chasing a specific 20.x patch.
+
 # ── Build stage ───────────────────────────────────────────────────────────────
-FROM node:20-alpine AS build
+FROM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -8,13 +13,13 @@ COPY src ./src
 RUN npm run build
 
 # ── Production dependencies only ─────────────────────────────────────────────
-FROM node:20-alpine AS deps
+FROM node:22-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 # ── Runtime ───────────────────────────────────────────────────────────────────
-FROM node:20-alpine AS runtime
+FROM node:22-alpine AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 
