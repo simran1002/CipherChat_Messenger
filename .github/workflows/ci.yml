@@ -25,6 +25,7 @@ env:
   NODE_VERSION: "22"
   TRIVY_VERSION: v0.74.0     # pinned: the installer no longer serves the action's older default
   REGISTRY: ghcr.io
+  DOCKER_BUILD_RECORD_UPLOAD: "false"   # no *.dockerbuild artifacts from build-push-action
   BACKEND_IMAGE: ghcr.io/${{ github.repository_owner }}/cipherchat-backend
   FRONTEND_IMAGE: ghcr.io/${{ github.repository_owner }}/cipherchat-frontend
 

@@ -20,6 +20,7 @@ env:
   JAVA_VERSION: "21"
   TRIVY_VERSION: v0.74.0
   REGISTRY: ghcr.io
+  DOCKER_BUILD_RECORD_UPLOAD: "false"   # no *.dockerbuild artifacts from build-push-action
 
 jobs:
   version:
@@ -148,6 +149,8 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v7
         with:
+          # only what this workflow produced; build-push-action's *.dockerbuild records are excluded
+          pattern: "{backend-jar,sbom-backend,sbom-frontend}"
           path: dist
           merge-multiple: true
       - name: Checksums for every asset
