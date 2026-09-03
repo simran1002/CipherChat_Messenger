@@ -80,6 +80,16 @@ public class GlobalExceptionHandler {
         return problem(HttpStatus.NOT_FOUND, "not_found", "No such endpoint.");
     }
 
+    /** A dependency (Redis, database) is unreachable: 503, so clients retry rather than surfacing a bug. */
+    @ExceptionHandler({org.springframework.data.redis.RedisConnectionFailureException.class,
+            org.springframework.dao.DataAccessResourceFailureException.class,
+            org.springframework.transaction.CannotCreateTransactionException.class})
+    public ProblemDetail dependencyUnavailable(Exception e) {
+        log.error("Dependency unavailable requestId={} cause={}", MDC.get("requestId"), e.getMessage());
+        return problem(HttpStatus.SERVICE_UNAVAILABLE, "dependency_unavailable",
+                "A backing service is temporarily unavailable — retry shortly.");
+    }
+
     @ExceptionHandler(Exception.class)
     public ProblemDetail handleUnexpected(Exception ex) {
         log.error("Unhandled exception requestId={}", MDC.get("requestId"), ex);

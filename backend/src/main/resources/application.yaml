@@ -38,6 +38,8 @@ spring:
   data:
     redis:
       url: ${REDIS_URL:redis://localhost:6379}
+      repositories:
+        enabled: false         # Redis is used through templates, never as a Spring Data repository store
       timeout: 2s
       lettuce:
         pool:
@@ -55,7 +57,9 @@ spring:
       properties:
         enable.idempotence: true
         max.in.flight.requests.per.connection: 5
-        delivery.timeout.ms: 30000
+        # Kafka requires delivery.timeout.ms >= linger.ms + request.timeout.ms (the client refuses to start otherwise).
+        request.timeout.ms: 20000
+        delivery.timeout.ms: 60000
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer   # Jackson 3 (Boot 4 default)
     consumer:
@@ -67,15 +71,14 @@ spring:
       value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
       properties:
         spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
-        spring.json.trusted.packages: com.cipherchat.*
+        # exact package names — the type mapper does not glob; "*" alone would trust everything
+        spring.json.trusted.packages: com.cipherchat.shared.events
     listener:
       ack-mode: record
 
   modulith:
     events:
-      jdbc:
-        schema-initialization:
-          enabled: true        # event_publication = the transactional outbox
+      # event_publication = the transactional outbox; the table is owned by Flyway (V2), not the framework
       republish-outstanding-events-on-restart: true
       completion-mode: delete
 
@@ -91,12 +94,20 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus,metrics
+        include: health,info,prometheus,metrics,modulith
   endpoint:
     health:
       show-details: when-authorized
       probes:
         enabled: true          # /actuator/health/liveness + /readiness for Kubernetes
+      group:
+        # Readiness = "can this instance serve a request right now": needs Postgres and Redis.
+        # Kafka is deliberately NOT in readiness — the outbox buffers publications through a broker
+        # outage and sends keep working; its state is visible in /actuator/health as "kafka".
+        readiness:
+          include: readinessState,db,redis
+        liveness:
+          include: livenessState
   metrics:
     tags:
       application: cipherchat
@@ -171,8 +182,6 @@ resilience4j:
         retry-exceptions:
           - org.springframework.web.client.ResourceAccessException
           - org.springframework.web.client.HttpServerErrorException
-      partitions: ${KAFKA_PARTITIONS:6}
-      replication: ${KAFKA_REPLICATION:1}
 
 logging:
   structured:

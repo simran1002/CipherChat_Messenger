@@ -27,7 +27,7 @@ USER cipherchat
 
 ENV PORT=8080 \
     UPLOAD_DIR=/data/uploads \
-    JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 -XX:+UseZGC -XX:+ZGenerational -Djava.security.egd=file:/dev/./urandom"
+    JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 -XX:+UseZGC -XX:+ZGenerational -Duser.timezone=UTC -Djava.security.egd=file:/dev/./urandom"
 EXPOSE 8080
 # Liveness only; readiness (DB/Redis/Kafka) is /actuator/health/readiness, checked by the orchestrator.
 HEALTHCHECK --interval=15s --timeout=3s --start-period=40s --retries=3 \

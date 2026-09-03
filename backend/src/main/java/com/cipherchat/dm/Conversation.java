@@ -39,10 +39,20 @@ public class Conversation {
 
     static Conversation between(UUID a, UUID b) {
         Conversation c = new Conversation();
-        int cmp = a.compareTo(b);
+        int cmp = compareUnsigned(a, b);
         c.userLow = cmp < 0 ? a : b;
         c.userHigh = cmp < 0 ? b : a;
         return c;
+    }
+
+    /**
+     * PostgreSQL orders UUIDs as unsigned bytes; {@link UUID#compareTo} compares signed longs, so
+     * the two disagree whenever the high bit of either half differs — about half of all pairs.
+     * The CHECK (user_low < user_high) is evaluated by the database, so the database's order wins.
+     * The canonical lower-case hex string sorts exactly like the unsigned bytes.
+     */
+    static int compareUnsigned(UUID a, UUID b) {
+        return a.toString().compareTo(b.toString());
     }
 
     public UUID getId() { return id; }

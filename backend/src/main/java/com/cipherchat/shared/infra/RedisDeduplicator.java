@@ -4,6 +4,9 @@ import java.time.Duration;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
@@ -22,6 +25,8 @@ public class RedisDeduplicator {
 
     private static final Duration TTL = Duration.ofMinutes(10);
 
+    private static final Logger log = LoggerFactory.getLogger(RedisDeduplicator.class);
+
     private final StringRedisTemplate redis;
 
     public RedisDeduplicator(StringRedisTemplate redis) {
@@ -30,13 +35,24 @@ public class RedisDeduplicator {
 
     /** The already-persisted message id for this client id, if we have seen it. */
     public Optional<Long> lookup(UUID clientMessageId) {
-        String v = redis.opsForValue().get(key(clientMessageId));
-        return v == null || v.isEmpty() ? Optional.empty() : Optional.of(Long.parseLong(v));
+        try {
+            String v = redis.opsForValue().get(key(clientMessageId));
+            return v == null || v.isEmpty() ? Optional.empty() : Optional.of(Long.parseLong(v));
+        } catch (DataAccessException e) {
+            // Fail open: the unique index on client_message_id still absorbs the retry, one DB round-trip later.
+            log.warn("Dedup cache unavailable (falling through to the unique index) cause={}", e.getMostSpecificCause().getMessage());
+            return Optional.empty();
+        }
     }
 
-    /** Record the mapping; returns false if another replica recorded it first (first writer wins). */
+    /** Record the mapping; returns false if another replica recorded it first (first writer wins) or Redis is down. */
     public boolean mark(UUID clientMessageId, long messageId) {
-        return Boolean.TRUE.equals(redis.opsForValue().setIfAbsent(key(clientMessageId), String.valueOf(messageId), TTL));
+        try {
+            return Boolean.TRUE.equals(redis.opsForValue().setIfAbsent(key(clientMessageId), String.valueOf(messageId), TTL));
+        } catch (DataAccessException e) {
+            log.warn("Dedup mark skipped (Redis unavailable) clientMessageId={}", clientMessageId);
+            return false;
+        }
     }
 
     private static String key(UUID clientMessageId) {

@@ -14,6 +14,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.60"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
   }
   # backend "s3" {
   #   bucket         = "cipherchat-tfstate"
@@ -74,7 +78,7 @@ module "eks" {
   subnet_ids = module.vpc.private_subnets
 
   cluster_endpoint_public_access = true
-  enable_irsa                    = true          # pods assume IAM roles via OIDC — no static keys
+  enable_irsa                    = true # pods assume IAM roles via OIDC — no static keys
 
   cluster_addons = {
     coredns    = {}
@@ -117,24 +121,24 @@ resource "aws_security_group" "db" {
 }
 
 resource "aws_db_instance" "postgres" {
-  identifier              = local.name
-  engine                  = "postgres"
-  engine_version          = "17"
-  instance_class          = var.db_instance_class
-  allocated_storage       = 50
-  max_allocated_storage   = 500
-  storage_encrypted       = true
-  db_name                 = "cipherchat"
-  username                = "cipherchat"
-  manage_master_user_password = true            # password lives in Secrets Manager, never in state
-  db_subnet_group_name    = aws_db_subnet_group.db.name
-  vpc_security_group_ids  = [aws_security_group.db.id]
-  multi_az                = var.environment == "prod"
-  backup_retention_period = var.environment == "prod" ? 14 : 1
-  deletion_protection     = var.environment == "prod"
-  skip_final_snapshot     = var.environment != "prod"
+  identifier                   = local.name
+  engine                       = "postgres"
+  engine_version               = "17"
+  instance_class               = var.db_instance_class
+  allocated_storage            = 50
+  max_allocated_storage        = 500
+  storage_encrypted            = true
+  db_name                      = "cipherchat"
+  username                     = "cipherchat"
+  manage_master_user_password  = true # password lives in Secrets Manager, never in state
+  db_subnet_group_name         = aws_db_subnet_group.db.name
+  vpc_security_group_ids       = [aws_security_group.db.id]
+  multi_az                     = var.environment == "prod"
+  backup_retention_period      = var.environment == "prod" ? 14 : 1
+  deletion_protection          = var.environment == "prod"
+  skip_final_snapshot          = var.environment != "prod"
   performance_insights_enabled = true
-  parameter_group_name    = aws_db_parameter_group.postgres.name
+  parameter_group_name         = aws_db_parameter_group.postgres.name
 }
 
 resource "aws_db_parameter_group" "postgres" {
@@ -142,8 +146,8 @@ resource "aws_db_parameter_group" "postgres" {
   family = "postgres17"
   # Connection budget: HikariCP pool (DB_POOL_SIZE) × max pods must stay under this.
   parameter {
-    name  = "max_connections"
-    value = "400"
+    name         = "max_connections"
+    value        = "400"
     apply_method = "pending-reboot"
   }
 }
@@ -172,19 +176,19 @@ resource "aws_security_group" "redis" {
 }
 
 resource "aws_elasticache_replication_group" "redis" {
-  replication_group_id = local.name
-  description          = "CipherChat presence, rate limits, sequences, WS fan-out"
-  engine               = "redis"
-  engine_version       = "7.1"
-  node_type            = var.redis_node_type
-  num_cache_clusters   = var.environment == "prod" ? 2 : 1
+  replication_group_id       = local.name
+  description                = "CipherChat presence, rate limits, sequences, WS fan-out"
+  engine                     = "redis"
+  engine_version             = "7.1"
+  node_type                  = var.redis_node_type
+  num_cache_clusters         = var.environment == "prod" ? 2 : 1
   automatic_failover_enabled = var.environment == "prod"
   multi_az_enabled           = var.environment == "prod"
   at_rest_encryption_enabled = true
   transit_encryption_enabled = true
-  subnet_group_name    = aws_elasticache_subnet_group.redis.name
-  security_group_ids   = [aws_security_group.redis.id]
-  parameter_group_name = "default.redis7"
+  subnet_group_name          = aws_elasticache_subnet_group.redis.name
+  security_group_ids         = [aws_security_group.redis.id]
+  parameter_group_name       = "default.redis7"
 }
 
 # ── Kafka (MSK) ──────────────────────────────────────────────────────────────
@@ -208,7 +212,7 @@ resource "aws_security_group" "kafka" {
 resource "aws_msk_cluster" "kafka" {
   cluster_name           = local.name
   kafka_version          = "3.7.x"
-  number_of_broker_nodes = length(var.azs)          # one broker per AZ → replication factor 3
+  number_of_broker_nodes = length(var.azs) # one broker per AZ → replication factor 3
 
   broker_node_group_info {
     instance_type   = var.kafka_instance_type
@@ -223,7 +227,7 @@ resource "aws_msk_cluster" "kafka" {
 
   encryption_info {
     encryption_in_transit {
-      client_broker = "TLS_PLAINTEXT"             # PLAINTEXT inside the VPC for the app; TLS available
+      client_broker = "TLS_PLAINTEXT" # PLAINTEXT inside the VPC for the app; TLS available
       in_cluster    = true
     }
   }
@@ -242,8 +246,8 @@ resource "aws_msk_cluster" "kafka" {
 }
 
 resource "aws_msk_configuration" "kafka" {
-  name           = "${local.name}-config"
-  kafka_versions = ["3.7.x"]
+  name              = "${local.name}-config"
+  kafka_versions    = ["3.7.x"]
   server_properties = <<-PROPERTIES
     auto.create.topics.enable=false
     default.replication.factor=3

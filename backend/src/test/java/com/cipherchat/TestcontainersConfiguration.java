@@ -13,20 +13,22 @@ class TestcontainersConfiguration {
 
 	@Bean
 	@ServiceConnection
+	// Pinned by digest: the JVM apache/kafka image trips Testcontainers' listener setup (advertised.listeners 0.0.0.0);
+	// this kafka-native build is the one verified to start under Testcontainers 2.x on Docker Desktop.
 	KafkaContainer kafkaContainer() {
-		return new KafkaContainer(DockerImageName.parse("apache/kafka-native:latest"));
+		return new KafkaContainer(DockerImageName.parse("apache/kafka-native@sha256:2885898ba17065023f1bd605f3a81efcfa986014f062b73b91ef5462485f9060"));
 	}
 
 	@Bean
 	@ServiceConnection
 	PostgreSQLContainer postgresContainer() {
-		return new PostgreSQLContainer(DockerImageName.parse("postgres:latest"));
+		return new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
 	}
 
 	@Bean
 	@ServiceConnection(name = "redis")
 	GenericContainer<?> redisContainer() {
-		return new GenericContainer<>(DockerImageName.parse("redis:latest")).withExposedPorts(6379);
+		return new GenericContainer<>(DockerImageName.parse("redis:7-alpine")).withExposedPorts(6379);
 	}
 
 }

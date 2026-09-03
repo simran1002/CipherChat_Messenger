@@ -102,6 +102,51 @@ class StompGatewayIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void outsiderCannotSubscribeToAPrivateRoom_orToSomeoneElsesDm() throws Exception {
+        Session owner = register("Ws Owner");
+        Session member = register("Ws Member");
+        Session outsider = register("Ws Outsider");
+        ResponseEntity<Map> created = http().post().uri("/api/v1/chatrooms")
+                .header(HttpHeaders.AUTHORIZATION, owner.bearer())
+                .body(Map.of("name", "ws-private-" + UUID.randomUUID().toString().substring(0, 8), "isPrivate", true))
+                .retrieve().toEntity(Map.class);
+        String room = (String) created.getBody().get("id");
+        http().post().uri("/api/v1/chatrooms/{id}/invite", room)
+                .header(HttpHeaders.AUTHORIZATION, owner.bearer())
+                .body(Map.of("userId", member.id().toString())).retrieve().toBodilessEntity();
+        ResponseEntity<Map> conv = http().post().uri("/api/v1/conversations")
+                .header(HttpHeaders.AUTHORIZATION, owner.bearer())
+                .body(Map.of("targetUserId", member.id().toString())).retrieve().toEntity(Map.class);
+        String conversation = (String) conv.getBody().get("id");
+
+        StompSession eve = connect(outsider);
+        StompSession legit = connect(member);
+        BlockingQueue<Map<String, Object>> evesRoom = new LinkedBlockingQueue<>();
+        BlockingQueue<Map<String, Object>> evesDm = new LinkedBlockingQueue<>();
+        BlockingQueue<Map<String, Object>> membersRoom = new LinkedBlockingQueue<>();
+        eve.subscribe("/topic/rooms/" + room, collectInto(evesRoom));
+        eve.subscribe("/topic/dm/" + conversation, collectInto(evesDm));
+        legit.subscribe("/topic/rooms/" + room, collectInto(membersRoom));
+        Thread.sleep(300);
+
+        http().post().uri("/api/v1/chatrooms/{id}/messages", room)
+                .header(HttpHeaders.AUTHORIZATION, owner.bearer())
+                .body(Map.of("message", "members only")).retrieve().toBodilessEntity();
+        http().post().uri("/api/v1/conversations/{id}/messages", conversation)
+                .header(HttpHeaders.AUTHORIZATION, owner.bearer())
+                .body(Map.of("message", "legacy plaintext dm")).retrieve().toBodilessEntity();
+
+        Map<String, Object> seenByMember = membersRoom.poll(10, TimeUnit.SECONDS);
+        assertThat(seenByMember).isNotNull().containsEntry("event", "newMessage");
+        // The refused subscriptions never deliver — not even after the legitimate member's frame arrived.
+        assertThat(evesRoom.poll(2, TimeUnit.SECONDS)).isNull();
+        assertThat(evesDm.poll(1, TimeUnit.SECONDS)).isNull();
+
+        if (eve.isConnected()) eve.disconnect();
+        legit.disconnect();
+    }
+
+    @Test
     void connectWithoutAValidTokenIsRefused() {
         WebSocketStompClient client = new WebSocketStompClient(new StandardWebSocketClient());
         client.setMessageConverter(new JacksonJsonMessageConverter());

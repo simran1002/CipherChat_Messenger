@@ -11,6 +11,7 @@ import org.springframework.kafka.annotation.KafkaHandler;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -35,17 +36,21 @@ public class AuditConsumer {
 
     private final AuditRepository logs;
     private final ProcessedEventLedger ledger;
+    private final TransactionTemplate tx;
 
-    public AuditConsumer(AuditRepository logs, ProcessedEventLedger ledger) {
+    public AuditConsumer(AuditRepository logs, ProcessedEventLedger ledger, TransactionTemplate tx) {
         this.logs = logs;
         this.ledger = ledger;
+        this.tx = tx;
     }
 
+    /** Explicit transaction — see NotificationConsumer for why not @Transactional on a class-level listener. */
     @KafkaHandler
-    @Transactional
     public void on(Audited e) {
-        if (!ledger.claim(CONSUMER, e.eventId())) return;
-        logs.save(AuditLog.from(e));
+        tx.executeWithoutResult(status -> {
+            if (!ledger.claim(CONSUMER, e.eventId())) return;
+            logs.save(AuditLog.from(e));
+        });
     }
 
     @KafkaHandler(isDefault = true)

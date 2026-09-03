@@ -2,6 +2,7 @@ package com.cipherchat;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.modulith.Modulithic;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.annotation.EnableScheduling;
@@ -25,12 +26,19 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  * be extracted into its own service without rewriting its callers.
  */
 @SpringBootApplication
+// Repositories are grouped as nested interfaces per module (ChatroomRepositories.Messages, …);
+// Spring Data skips nested interfaces unless told otherwise.
+@EnableJpaRepositories(basePackageClasses = CipherchatApplication.class, considerNestedRepositories = true)
 @Modulithic(sharedModules = "shared", systemName = "CipherChat")
 @EnableScheduling
 @EnableAsync
 public class CipherchatApplication {
 
     public static void main(String[] args) {
+        // A server runs in UTC regardless of the host: timestamps are stored as timestamptz, and the
+        // JDBC driver sends the JVM default zone as the session TimeZone — legacy aliases such as
+        // "Asia/Calcutta" are rejected by the Alpine Postgres image.
+        java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("UTC"));
         SpringApplication.run(CipherchatApplication.class, args);
     }
 }

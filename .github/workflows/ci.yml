@@ -39,12 +39,11 @@ jobs:
           cache: maven
       - name: Formatting & unused imports (Spotless)
         run: ./mvnw -B -q spotless:check
-      - name: Unit tests
-        run: ./mvnw -B test
-      - name: Integration tests (Postgres, Redis, Kafka via Testcontainers)
-        run: ./mvnw -B verify -DskipUnitTests
-      - name: Coverage gate (JaCoCo)
-        run: ./mvnw -B -q jacoco:report jacoco:check
+      # verify = unit tests (surefire) → integration tests (failsafe, Testcontainers on the
+      # runner's Docker daemon) → merged JaCoCo report + coverage gate, in one lifecycle so
+      # the gate sees the merged exec file.
+      - name: Unit + integration tests, coverage gate
+        run: ./mvnw -B verify
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v4

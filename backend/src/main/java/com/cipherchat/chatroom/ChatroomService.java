@@ -74,15 +74,13 @@ public class ChatroomService {
         for (Object[] row : members.countByRooms(ids)) counts.put((UUID) row[0], (Long) row[1]);
         Map<UUID, Role> myRoles = members.findAllByKeyUserIdAndKeyChatroomIdIn(userId, ids).stream()
                 .collect(Collectors.toMap(ChatroomMember::getChatroomId, ChatroomMember::getRole));
-        Map<UUID, Long> watermarks = readStates.findAllByKeyUserId(userId).stream()
-                .collect(Collectors.toMap(RoomReadState::getChatroomId, RoomReadState::getLastReadSequence));
+        Map<UUID, Long> unreadByRoom = new HashMap<>();
+        for (Object[] row : messages.unreadByRooms(userId, ids)) unreadByRoom.put((UUID) row[0], ((Number) row[1]).longValue());
         Map<UUID, UserView.Summary> creators = users.summaries(
                 visible.stream().map(Chatroom::getCreatedBy).filter(java.util.Objects::nonNull).toList());
 
         return visible.stream().map(room -> {
-            // One indexed range count per room; rooms per org are tens, not thousands.
-            long unread = messages.countByChatroomIdAndSequenceNumberGreaterThanAndSenderIdNot(
-                    room.getId(), watermarks.getOrDefault(room.getId(), 0L), userId);
+            long unread = unreadByRoom.getOrDefault(room.getId(), 0L);   // one grouped query for the whole sidebar
             String creatorName = room.getCreatedBy() == null ? null
                     : Optional.ofNullable(creators.get(room.getCreatedBy())).map(UserView.Summary::name).orElse(null);
             return view(room, creatorName, counts.getOrDefault(room.getId(), 0L).intValue(), myRoles.get(room.getId()), unread);

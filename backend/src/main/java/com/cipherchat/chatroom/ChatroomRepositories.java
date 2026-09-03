@@ -72,6 +72,20 @@ final class ChatroomRepositories {
 
         long countByChatroomIdAndSequenceNumberGreaterThanAndSenderIdNot(UUID chatroomId, long watermark, UUID senderId);
 
+        /**
+         * Unread per room for one user in ONE query: messages above the user's watermark (0 when
+         * no watermark row exists), not authored by the user. Walks (chatroom_id, sequence_number).
+         */
+        @Query(value = """
+                select m.chatroom_id, count(*)
+                from messages m
+                left join room_read_state r on r.chatroom_id = m.chatroom_id and r.user_id = :user
+                where m.chatroom_id in (:ids)
+                  and m.sender_id <> :user
+                  and m.sequence_number > coalesce(r.last_read_sequence, 0)
+                group by m.chatroom_id""", nativeQuery = true)
+        List<Object[]> unreadByRooms(@Param("user") UUID userId, @Param("ids") Collection<UUID> chatroomIds);
+
         List<Message> findTop10ByChatroomIdAndPinnedTrueOrderByCreatedAtDesc(UUID chatroomId);
 
         /** Ranked full-text search on the GIN index; stemmed, whole-word (like Mongo's $text). */
