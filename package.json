@@ -1,8 +1,8 @@
 {
   "name": "cipherchat-messenger",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
-  "description": "Self-hostable secure team messaging: exactly-once delivery, E2EE DMs (messages + attachments), Redis-backed horizontal scaling, content-free observability — with the tests and live demos to prove all four.",
+  "description": "Self-hostable secure team messaging: exactly-once delivery enforced by the database, E2EE DMs (messages + attachments), stateless scale-out on Redis + Kafka, content-free observability — Java 21 / Spring Boot modular monolith + React.",
   "license": "MIT",
   "author": "Simran Yadav",
   "repository": {
@@ -13,22 +13,24 @@
     "e2ee",
     "end-to-end-encryption",
     "chat",
-    "socket-io",
+    "spring-boot",
+    "spring-modulith",
+    "kafka",
+    "postgresql",
     "redis",
-    "typescript",
+    "stomp",
     "react",
     "exactly-once",
     "distributed-systems"
   ],
   "scripts": {
-    "install-all": "cd chat-back && npm install && cd ../chat-front && npm install",
-    "dev:back": "cd chat-back && npm run dev",
+    "dev:back": "cd backend && ./mvnw spring-boot:run",
     "dev:front": "cd chat-front && npm run dev",
-    "test": "cd chat-back && npm test && cd ../chat-front && npm test",
-    "typecheck": "cd chat-back && npm run typecheck && cd ../chat-front && npm run typecheck",
-    "demo:failover": "cd chat-back && npm run demo:failover",
+    "test": "cd backend && ./mvnw test && cd ../chat-front && npm test",
+    "verify": "cd backend && ./mvnw verify",
+    "typecheck": "cd chat-front && npm run typecheck",
     "stack": "docker compose up --build",
-    "stack:scale": "docker compose -f docker-compose.scale.yml up --build -d",
-    "stack:scale:ws": "docker compose -f docker-compose.scale.yml -f docker-compose.scale.leastconn.yml up --build -d"
+    "stack:scale": "docker compose -f docker-compose.yml -f docker-compose.scale.yml up --build --scale backend=2",
+    "stack:s3": "docker compose --profile s3 up --build"
   }
 }
