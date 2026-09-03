@@ -23,7 +23,7 @@ CipherChat is deployed by an organisation for its own people. The adversaries th
 
 ## Transport & headers
 
-TLS terminates at the ALB/ingress (ACM); pods speak HTTP inside the VPC. `server.forward-headers-strategy: native` so client IPs and scheme survive the proxy. Cookies are `Secure` in `prod`. CORS is an explicit origin allow-list with credentials; wildcard is refused.
+TLS terminates at the ALB/ingress (ACM); pods speak HTTP inside the VPC. `server.forward-headers-strategy: native` so client IPs and scheme survive the proxy. Cookies are `Secure` in `prod`. CORS is an explicit origin allow-list with credentials (`CORS_ALLOWED_ORIGINS`); Spring rejects a `*` origin combined with credentials at request time, so a misconfigured wildcard fails closed rather than opening the API.
 
 ## Input handling
 

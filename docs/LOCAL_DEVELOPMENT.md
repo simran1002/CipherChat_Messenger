@@ -73,6 +73,21 @@ cd chat-front
 npm run typecheck && npm run lint && npm test && npm run build
 ```
 
+One command for the whole runtime verification (builds from an empty cache, starts the stack, runs every check below, the k6 load test, the two-replica fan-out and kill-a-replica drill, and the image scan; writes `docs/VERIFICATION-RUN.md`):
+
+```bash
+bash scripts/verify-all.sh
+```
+
+Individually, against a running stack (`docker compose up`):
+
+```bash
+python scripts/verify-stack.py            # health, auth, exactly-once send, private-room 403s, DM replay 409, Kafka notification
+python scripts/verify-stack.py --chaos    # + pauses Redis and stops Kafka to check the documented degradation and recovery
+python scripts/verify-fanout.py           # scale-out profile: two sockets on different replicas, ACK + cross-replica broadcast
+docker run --rm -i -e BASE_URL=http://host.docker.internal:8080 grafana/k6 run - < load/k6-stomp.js   # latency/throughput
+```
+
 ## Useful endpoints
 
 | | |
@@ -108,6 +123,7 @@ npm run typecheck && npm run lint && npm test && npm run build
 ## Troubleshooting
 
 - **`Could not find a valid Docker environment`** during `mvnw verify` — Docker is not running; unit tests still pass, ITs are skipped only when using `test`, so either start Docker or run `./mvnw test`.
+- **`FATAL: invalid value for parameter "TimeZone"`** on the first connection — the JDBC driver sends the JVM's default zone and the Alpine Postgres image lacks legacy aliases such as `Asia/Calcutta`. The application pins itself to UTC (`CipherchatApplication.main`, the Dockerfile and the test runners all set `-Duser.timezone=UTC`); if you run the class some other way, pass that flag.
 - **Flyway validate failed / schema mismatch** — the entity and migration disagree; fix the migration (never `ddl-auto: update`).
 - **Kafka topics missing** — check `KAFKA_BOOTSTRAP_SERVERS`; topics are created by the app on boot, not by the broker's auto-create.
 - **STOMP connects then disconnects** — the token in the `CONNECT` header is expired/invalid; the frontend refreshes and reconnects automatically (`connect_error: Invalid token`).

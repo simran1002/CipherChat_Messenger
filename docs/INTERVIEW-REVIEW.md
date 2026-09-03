@@ -112,15 +112,22 @@ implementation because several of its lessons still apply.
   a deliberate choice against user-facing DoS.
 - **No email-based password reset** — no mail sender in this version.
 
-**Not yet verified in this repository state (say so before they ask):**
-- The Testcontainers integration suites (`*IT`) and the Compose/Kubernetes
-  manifests were written against the real contracts but could not be
-  executed in the environment where the port was done (no Docker daemon).
-  Unit tests, the Modulith boundary test and the full compile are green;
-  the ITs are the next thing to run. `LOCAL_DEVELOPMENT.md` has the command.
-- Throughput and connection-density numbers below are from the previous
-  implementation; the harness (`scripts/connflood.mts`, k6) targets Socket.IO
-  and needs a STOMP client to refresh them against `/ws`.
+**What running the integration suite found (say this before they ask — it is the best story in the repo):**
+- The Testcontainers suites were written before Docker was available and executed for the
+  first time during the verification pass. Every one of them now passes (auth, messaging, DMs,
+  STOMP, Kafka consumers, Kafka resilience), and getting there surfaced real defects the unit
+  tests could not see: unauthorised STOMP `SUBSCRIBE` (any user could read any room), a
+  signed-vs-unsigned UUID ordering bug that blocked roughly half of all DM pairs, an invalid Kafka
+  producer timeout pair, a trusted-packages pattern the type mapper does not glob, a JSON
+  `RecordMessageConverter` contributed by Modulith that rejected typed records, a DLT suffix
+  mismatch, the outbox table missing from the Flyway-owned schema, and a Docker image that built
+  but could not start (layered-jar launcher layout). Each has a test or a migration behind it now.
+- `README.md` → *Verification status* lists exactly what has been executed, what is a design
+  target, and what still needs infrastructure this repository does not own (a Kubernetes cluster,
+  an AWS account, the Render account, a pushed commit for GitHub Actions).
+- Throughput and connection-density numbers from the previous implementation are kept in the
+  appendix and labelled; the Java backend's own numbers come from `load/k6-stomp.js` and are
+  quoted only where that harness produced them.
 
 **Known gaps an interviewer could press:**
 - **Room text search is whole-word/stemmed**; short queries fall back to an

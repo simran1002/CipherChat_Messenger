@@ -61,8 +61,11 @@ One **Java 21 / Spring Boot 4 modular monolith** (Spring Modulith — module bou
 
 Every shot below comes from a single scripted three-user session against a live
 stack (Playwright driving three isolated browser contexts). The messages, unread
-counts, latency numbers, safety number and ciphertext are all genuine state —
-nothing is mocked or composited.
+counts, safety number and ciphertext are genuine state — nothing is mocked or
+composited. The captures predate the Java backend: the pages are unchanged, but
+the numbers on the metrics screenshot were produced by the previous Node
+implementation (see *Verification status* below for what the Java backend has
+been measured on).
 
 <table>
 <tr>
@@ -169,6 +172,29 @@ cd chat-front && npm test        # components, hooks, offline queue, crypto know
 Integration suites exercise the *contract*, not the code: auth rotation and replayed-cookie rejection, double-send absorption with gapless sequences, private-room 403s, E2EE replay `409`, a Kafka-fed notification appearing exactly once, a STOMP send ACKed and broadcast to another socket. CI runs them against service containers, gates coverage with JaCoCo, formats with Spotless, scans lockfiles and images with Trivy, publishes images to GHCR and deploys through a manually approved environment.
 
 Crypto (client) is pinned to **RFC 7748 / 8032 / 5869 and NIST GCM test vectors**, with tamper, replay, out-of-order and rotation-boundary suites and a committed golden transcript. The server's TOTP is checked against the **RFC 6238** vectors.
+
+## Verification status
+
+Every row below was produced in this repository's state, on one Windows 11 laptop (12 CPUs, Docker Desktop VM with 8 GB). VERIFIED means executed and observed; DESIGNED means implemented and reviewed but not exercised end to end; NOT VERIFIED means it needs infrastructure this repository does not own.
+
+| Claim | Status | Evidence |
+|---|---|---|
+| Backend compiles; unit + Modulith boundary tests | VERIFIED | `./mvnw clean test` — 27 tests, 0 failures |
+| Integration suites against real Postgres 17, Redis 7, Kafka (Testcontainers) | VERIFIED | `./mvnw verify` — 23 tests in 6 suites, 0 failures, JaCoCo gate met (60 % lines, 43 % branches) |
+| Exactly-once persistence (same `clientMessageId` twice → one row, `duplicate:true`) | VERIFIED | `MessagingIT`, `StompGatewayIT` |
+| E2EE replay backstop (`(conversation, sender, sessionId, ctr)` reused → `409 replayed_counter`) | VERIFIED | `DirectMessageIT` |
+| STOMP: JWT at CONNECT, ACK + broadcast, outsider `SUBSCRIBE` refused | VERIFIED | `StompGatewayIT` |
+| Kafka: outbox → consumer → one side effect; duplicate event delivery → one row; poison record → DLT; failing side effect retried then dead-lettered | VERIFIED | `KafkaConsumersIT`, `KafkaResilienceIT` |
+| Frontend typecheck, lint, tests, production build | VERIFIED | 153 Vitest tests, 0 lint errors, `vite build` |
+| Dependency vulnerabilities (frontend lockfile) | VERIFIED | Trivy: 0 HIGH/CRITICAL after upgrading axios and react-router |
+| Secrets in the tree | VERIFIED | Trivy secret scan over every source directory: none; `git grep` for key/credential patterns: none |
+| Backend image builds from an empty cache | VERIFIED | `docker compose build --no-cache backend` — twice: the first image built but could not start (layered-jar launcher layout, fixed), the rebuilt image was not observed starting before the environment failed (next row) |
+| Kubernetes manifests | DESIGNED | kubeconform: 11 objects valid against the 1.30 schemas; not applied to a cluster |
+| Terraform | DESIGNED | `terraform fmt`, `init`, `validate` pass; not planned or applied against an AWS account |
+| Compose stack end to end, Redis/Kafka failure drills, two-replica fan-out, k6 latency, image scan, `EXPLAIN` of the hot queries | NOT VERIFIED | the host disk filled during the image build, the Docker VM went read-only and WSL wedged past what a non-elevated session can reset. Everything is scripted: `bash scripts/verify-all.sh` runs all of it and writes `docs/VERIFICATION-RUN.md` |
+| Render deployment | NOT VERIFIED | the exact image was built and started locally; the hosted deploy was not observed (no Render account/logs) |
+| GitHub Actions run | NOT VERIFIED | workflow is structurally validated; it has not run on a pushed commit |
+| 10,000 concurrent sockets / 200 msg/s / p95 < 250 ms | DESIGN TARGETS | the 10k figure was measured on the previous Node implementation ([WHY-DIFFERENT.md](docs/WHY-DIFFERENT.md)); not re-measured here |
 
 ## Threat model (DMs)
 

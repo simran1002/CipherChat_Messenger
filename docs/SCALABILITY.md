@@ -7,11 +7,11 @@ CipherChat is self-hosted team messaging for one organisation at a time. The des
 | Dimension | Target |
 |---|---|
 | Users per deployment | 50 – 5,000 |
-| Concurrent WebSocket sessions | up to 10,000 (bench: 10,000/10,000 connected on one node) |
+| Concurrent WebSocket sessions | up to 10,000 (design target; the 10,000/10,000 figure was measured on the previous Node implementation — see `WHY-DIFFERENT.md`, not re-measured on this backend) |
 | Sessions per backend pod | ~2,000 comfortable, 5,000 ceiling |
 | Peak message rate, org-wide | ~200 msg/s sustained, 1,000 msg/s bursts |
 | Messages per year | ~10 M (tens of GB in Postgres with attachments external) |
-| p95 end-to-end broadcast (send → other client's screen) | < 250 ms at 100 msg/s on 2 pods |
+| p95 end-to-end broadcast (send → other client's screen) | < 250 ms at 100 msg/s on 2 pods (target, not measured on this backend) |
 
 Anything beyond this is a different product (multi-tenant SaaS), and the trade-offs would be different.
 
@@ -79,4 +79,4 @@ Virtual threads (`spring.threads.virtual.enabled`) make blocking JDBC/Redis call
 
 ## Benchmark record
 
-`chat-back` era, single node: 10,000/10,000 concurrent WebSocket connections held with heartbeat, roster broadcaster fix required to get there (the naive per-connect broadcast was O(N²)). The Java gateway keeps the same throttled roster design; rerun `scripts/connflood.mts` against `/ws` (STOMP) once the frontend port is merged to refresh the number.
+Previous (Node) implementation, single node: 10,000/10,000 concurrent WebSocket connections held with heartbeat, roster broadcaster fix required to get there (the naive per-connect broadcast was O(N²)). The Java gateway keeps the same throttled roster design but that number has **not** been re-measured against it. The Java backend's own harness is `load/k6-stomp.js` (REST latency + STOMP send → ACK → broadcast); its results, and only its results, are quoted in the README's *Verification status* section.

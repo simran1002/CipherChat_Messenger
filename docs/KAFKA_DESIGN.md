@@ -20,7 +20,7 @@ Doing them synchronously would add their latency and their failure modes to the 
 | `presence-events` | user id | presence | `analytics` | 6 |
 | `notification-events` | user id | any module requesting a notification | `notifications` | 6 |
 | `audit-events` | actor id (or `anonymous`) | auth (and future: chatroom admin actions) | `audit` | 6 |
-| `<topic>.DLT` | same | `DefaultErrorHandler` | operators | same as source |
+| `<topic>-dlt` | same | `DefaultErrorHandler` | operators | same as source |
 
 Topics are declared in code (`KafkaInfrastructure.topics()`) so Testcontainers, Compose and MSK have identical layouts. Replication factor is left to the broker default (1 locally, 3 on MSK with `min.insync.replicas=2`, see `infrastructure/terraform`).
 
@@ -42,7 +42,7 @@ Consequences:
 - No message is ever announced that the database did not store.
 - Kafka being down does not fail a send; publications queue in Postgres.
 
-Serialization: the Modulith serializer is bypassed (`serializeExternalization(false)`) so Spring Kafka's `JacksonJsonSerializer` is the single wire format. It stamps a `__TypeId__` header with the record class, which lets consumers get typed objects back.
+Serialization: the Modulith serializer is bypassed (`serializeExternalization(false)`) so Spring Kafka's `JacksonJsonSerializer` is the single wire format. It stamps a `__TypeId__` header with the record class, which lets consumers get typed objects back. Two details the integration suite forced into the open: the consumer's trusted-packages list must name the events package exactly (the type mapper does not glob), and `spring-modulith-events-kafka` contributes a JSON `RecordMessageConverter` bean meant for its own string-serialised path — Spring Boot wires it into every listener, where it rejects already-typed values. `KafkaInfrastructure` declares the plain `MessagingMessageConverter` as primary so typed records pass through; `EventWireFormatTest` pins the serializer/deserializer pair and `KafkaResilienceIT` proves duplicate delivery, poison records and retry-then-DLT against a real broker.
 
 ## Consumer side
 
@@ -77,11 +77,11 @@ The analytics consumer is deliberately **not** ledger-backed: a Prometheus count
 
 ### Failure policy
 
-`DefaultErrorHandler` with `ExponentialBackOffWithMaxRetries(4)` — 0.5 s, 1 s, 2 s, 4 s — then `DeadLetterPublishingRecoverer` copies the record to `<topic>.DLT` (same partition, exception class/message/stack in headers) and **the partition moves on**. A poison record costs ~8 seconds, never a stuck consumer.
+`DefaultErrorHandler` with `ExponentialBackOffWithMaxRetries(4)` — 0.5 s, 1 s, 2 s, 4 s — then `DeadLetterPublishingRecoverer` copies the record to `<topic>-dlt` (same partition, exception class/message/stack in headers) and **the partition moves on**. A poison record costs ~8 seconds, never a stuck consumer.
 
 Not retried at all (straight to DLT): `ApiException` (business rejection), `IllegalArgumentException`, `JacksonException`, and `DeserializationException` (the `ErrorHandlingDeserializer` turns an undeserializable payload into a handled exception instead of a crash loop).
 
-Operating the DLT: it is a normal topic. Inspect with `kcat -t message-events.DLT -C -f '%h\n%s\n'`; replay by producing the record back to the source topic once the bug is fixed — the ledger makes the replay safe for records that *had* been processed.
+Operating the DLT: it is a normal topic. Inspect with `kcat -t message-events-dlt -C -f '%h\n%s\n'`; replay by producing the record back to the source topic once the bug is fixed — the ledger makes the replay safe for records that *had* been processed.
 
 ### Scaling consumers
 

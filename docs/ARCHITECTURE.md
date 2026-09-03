@@ -89,7 +89,7 @@ Same shape minus the sequence (DMs are id-ordered), plus `EnvelopeValidator` and
 
 - **Transport**: STOMP over raw WebSocket at `/ws` (no SockJS — every target browser has WebSockets; long-polling fallbacks are what forced sticky sessions in the previous implementation).
 - **Broker**: Spring's simple broker for `/topic`, `/queue`; app destinations `/app/**`; user destinations `/user/**` resolved by principal name = user id.
-- **Auth**: `StompAuthInterceptor` parses the bearer token on `CONNECT`; unauthenticated frames are rejected in the inbound channel before any handler runs.
+- **Auth**: `StompAuthInterceptor` parses the bearer token on `CONNECT`, and on `SUBSCRIBE` checks room membership for `/topic/rooms/{id}` and conversation participation for `/topic/dm/{id}` (only `/topic/presence` and the caller's own `/user/**` queues are open); unauthenticated or unauthorised frames are rejected in the inbound channel before any handler or broker sees them (`StompGatewayIT`).
 - **Cross-pod**: `RedisFanout` publishes `{event, payload}` frames to `ws:room:*`, `ws:dm:*`, `ws:user:*`, `ws:all`; each pod's listener forwards to its local broker. Pods are otherwise unaware of each other.
 - **Presence**: connect/disconnect events → `PresenceService` (Redis hash per user with session count + TTL) → throttled `RosterBroadcaster`. Heartbeats every 25 s self-heal after a TTL expiry.
 - **Frontend adapter**: `chat-front/src/services/stompSocket.ts` presents the Socket.IO-shaped `emit/on` surface the pages use and maps it onto destinations/subscriptions — one file knows both vocabularies.
@@ -105,7 +105,7 @@ Same shape minus the sequence (DMs are id-ordered), plus `EnvelopeValidator` and
 
 - **Errors**: `ApiException(status, code, message)` → RFC 9457 ProblemDetail with `code`, `timestamp`, `requestId`; validation errors add a `fields` map. Codes are stable strings the client keys on (`rate_limited`, `replayed_counter`, …).
 - **Correlation**: `X-Request-Id` accepted or generated, placed in MDC, echoed in responses and problem bodies; the nginx LB injects one when the client sent none.
-- **Observability**: Actuator health (liveness/readiness with DB/Redis/Kafka indicators), Prometheus at `/actuator/prometheus`, app metrics `cipherchat.*` (`AppMetrics`), structured JSON logs (`LOG_FORMAT=ecs`) in prod, module-level observation via Modulith insight.
+- **Observability**: Actuator health (liveness = process; readiness = DB + Redis, the two a request cannot be served without; Kafka is a separate `kafka` contributor in `/actuator/health` that deliberately does not gate readiness because the outbox buffers through a broker outage), Prometheus at `/actuator/prometheus`, app metrics `cipherchat.*` (`AppMetrics`), structured JSON logs (`LOG_FORMAT=ecs`) in prod, module graph at `/actuator/modulith`. (Modulith's per-module tracing proxies are deliberately not used: they CGLIB-proxy every bean in a module package, which breaks servlet filters whose `init` is `final` — found when the integration suite first ran.)
 - **Resilience**: Resilience4j circuit breaker + retry on the Anthropic client; Kafka retry/DLT; rate limiter fails open; fan-out failures are logged, never propagated to the sender.
 - **Configuration**: everything via environment variables with dev defaults (`application.yaml`); the `prod` profile refuses default secrets and forces secure cookies.
 

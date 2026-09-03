@@ -22,7 +22,7 @@ users ──┬── refresh_tokens          (device sessions; hashed tokens)
         ├── notifications
         └── audit_logs
 processed_events        (Kafka consumer idempotency ledger)
-event_publication       (Spring Modulith outbox — created by the framework)
+event_publication       (Spring Modulith outbox — owned by Flyway V2 like every other table)
 ```
 
 ## Tables that carry design decisions
@@ -36,7 +36,7 @@ event_publication       (Spring Modulith outbox — created by the framework)
 | `sequence_number BIGINT` | per-room, gapless; **`UNIQUE (chatroom_id, sequence_number)`** |
 | `client_message_id UUID` | **partial unique index `WHERE client_message_id IS NOT NULL`** |
 | `body`, `type`, file/location columns, `reply_*`, `mentions UUID[]`, `pinned`, `edited`, `expires_at` | |
-| `search tsvector` (generated) | **GIN** index for full-text search |
+| full-text search | **GIN** expression index on `to_tsvector('english', body)` — the query uses the same expression so the planner matches it |
 
 Two indexes implement exactly-once persistence:
 
@@ -53,7 +53,7 @@ Unread counts are `count(*) WHERE sequence_number > last_read_sequence` per room
 
 ### `conversations`
 
-`(user_low, user_high)` with a CHECK `user_low < user_high` and a unique index: (a,b) and (b,a) are the same row by construction, and two users clicking "start" simultaneously produces one conversation (the loser re-reads).
+`(user_low, user_high)` with a CHECK `user_low < user_high` and a unique index: (a,b) and (b,a) are the same row by construction, and two users clicking "start" simultaneously produces one conversation (the loser re-reads). One subtlety the integration suite caught: PostgreSQL orders UUIDs as unsigned bytes while `java.util.UUID.compareTo` is signed, so the application orders the pair by the canonical hex string (`Conversation.compareUnsigned`) — otherwise about half of all pairs violate the CHECK. `ConversationOrderingTest` pins this.
 
 ### `dm_messages`
 
@@ -90,7 +90,7 @@ The TOTP seed is sealed with AES-256-GCM under a key derived from `SEAL_SECRET` 
 | unread count | same index, range + count |
 | DM history page | `(conversation_id, id)` |
 | sidebar preview per conversation | `DISTINCT ON (conversation_id) … ORDER BY conversation_id, id DESC` on the same index |
-| full-text search in a room | GIN on generated `tsvector`, ILIKE fallback for short/non-word queries |
+| full-text search in a room | GIN expression index on `to_tsvector('english', body)`, ILIKE fallback for short/non-word queries |
 | expiry sweep | partial index `WHERE expires_at IS NOT NULL` |
 | inbox | partial `(user_id, created_at DESC) WHERE NOT read` |
 | audit by actor / by action | `(actor_id, created_at DESC)`, `(action, created_at DESC)` |
@@ -101,4 +101,4 @@ HikariCP `maximum-pool-size` (`DB_POOL_SIZE`, default 20) × backend replicas mu
 
 ## Migrations
 
-One versioned SQL file per change (`V2__…sql`). Rules: additive first (new nullable column → backfill → constraint), never rename in place, never edit an applied migration. The outbox table is created by Spring Modulith (`schema-initialization.enabled: true`) and excluded from `validate`.
+One versioned SQL file per change (`V2__…sql`). Rules: additive first (new nullable column → backfill → constraint), never rename in place, never edit an applied migration. The outbox table (`event_publication`) is a Flyway migration too (V2): Hibernate validates Modulith's `JpaEventPublication` entity with the rest of the persistence unit, so a framework-side initializer would run too late — found when the integration suite first ran against a real database.

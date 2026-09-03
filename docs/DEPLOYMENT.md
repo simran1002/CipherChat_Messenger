@@ -18,10 +18,14 @@ Both are the same root cause: **deploy configuration living outside the reposito
 - `render.yaml` at the repository root makes the service a **Docker** runtime built from `backend/Dockerfile`. The image pins Java 21; the build no longer depends on Render's Node toolchain at all.
 - Health check `/actuator/health/readiness`; port from `PORT`.
 - Managed Postgres and Redis (Render Key Value) are declared in the same blueprint and injected via `fromDatabase` / `fromService` — no hand-typed connection strings.
-- **Kafka is not offered by Render.** The blueprint points `KAFKA_BOOTSTRAP_SERVERS` at an external broker (Upstash/Confluent/Redpanda Cloud) supplied as a secret. The app boots without a reachable broker (publications queue in the outbox table and readiness reports Kafka down until it is configured) — set the variable before expecting notifications/audit rows.
+- **Kafka is not offered by Render.** The blueprint points `KAFKA_BOOTSTRAP_SERVERS` at an external broker (Upstash/Confluent/Redpanda Cloud) supplied as a secret. The app boots and passes readiness without a reachable broker (publications queue in the outbox table; `/actuator/health` shows the `kafka` contributor DOWN until it is configured) — set the variable before expecting notifications/audit rows.
 - Uploads: Render disks are single-instance; use `STORAGE_DRIVER=s3` with any S3-compatible bucket for anything beyond a demo.
 
 Deploy: connect the repo, choose "Blueprint", set the secret env vars the blueprint marks `sync: false`, deploy. Every later change to build/start/health/env is a commit, reviewable and revertible.
+
+### What running the exact image locally found
+
+The blueprint's image was built with `--no-cache` from the same Dockerfile and context Render uses and then started under Compose. It **built and then failed to start**: Spring Boot 4's `tools` jarmode writes the layered layout without the launcher classes unless `extract --layers --launcher` is used, so the `JarLauncher` entrypoint did not exist. That is a deploy-blocking defect the static review of the blueprint could not have caught; it is fixed in the Dockerfile and the container now passes its readiness check. Two caveats remain that only the platform can confirm: the hosted deploy itself has not been observed (no Render account/logs were available), and the persistent disk Render mounts at `/data/uploads` is owned by root while the container runs as an unprivileged user — if uploads fail with a permission error there, set `STORAGE_DRIVER=s3` (recommended for anything beyond a demo anyway) or run a one-off `chown` on the disk.
 
 ## 2. Docker Compose (single host, staging, demos)
 
@@ -62,7 +66,7 @@ What the manifests encode and why:
 |---|---|
 | `maxUnavailable: 0`, `maxSurge: 1` | never drop below capacity during a rollout |
 | `terminationGracePeriodSeconds: 45` + `preStop sleep 5` | ALB stops routing before SIGTERM; Spring's graceful shutdown (30 s) drains in-flight requests |
-| startup / liveness / readiness probes on Actuator | readiness includes DB, Redis, Kafka — a pod that lost its dependencies stops taking traffic |
+| startup / liveness / readiness probes on Actuator | readiness includes DB and Redis — a pod that lost either stops taking traffic; Kafka is reported in `/actuator/health` but does not gate readiness (sends work through a broker outage via the outbox) |
 | no CPU limit, memory limit 1 Gi, `MaxRAMPercentage=75` | avoid CFS throttling on latency-sensitive WS traffic; JVM sized to the cgroup |
 | `readOnlyRootFilesystem`, non-root, drop ALL caps | least privilege |
 | PDB `minAvailable: 1`, zone spread | survive node drains and AZ loss |
@@ -79,4 +83,4 @@ What the manifests encode and why:
 - **Rotation**: `JWT_SECRET` rotation logs everyone out at once (acceptable, announced); `SEAL_SECRET` rotation requires re-sealing `two_factor.secret_sealed` — script before rotating.
 - **Scaling knobs**: replicas (HPA), `DB_POOL_SIZE` (keep × replicas < `max_connections`), `KAFKA_PARTITIONS` (only up, and only with a topic migration), RDS instance class.
 - **Dashboards**: Prometheus scrape annotations are on the pods; key series `cipherchat_send_latency_seconds{quantile}`, `cipherchat_ws_sessions`, `cipherchat_send_duplicates_total`, `kafka_consumer_records_lag_max`, `hikaricp_connections_pending`.
-- **DLT watch**: alert on any message in `*.DLT`; replay after the fix (idempotency ledger makes it safe).
+- **DLT watch**: alert on any message in `*-dlt`; replay after the fix (idempotency ledger makes it safe).
