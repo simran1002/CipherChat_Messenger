@@ -147,7 +147,7 @@ jobs:
     needs: [version, backend-jar, images]
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           # only what this workflow produced; build-push-action's *.dockerbuild records are excluded
           pattern: "{backend-jar,sbom-backend,sbom-frontend}"
