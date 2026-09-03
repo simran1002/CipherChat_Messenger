@@ -275,6 +275,14 @@
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
+				<executions>
+					<!-- META-INF/build-info.properties → /actuator/info reports the released version. -->
+					<execution>
+						<goals>
+							<goal>build-info</goal>
+						</goals>
+					</execution>
+				</executions>
 			</plugin>
 
 			<!-- Unit tests: *Test. Skippable with -DskipUnitTests so CI can run the IT stage alone. -->

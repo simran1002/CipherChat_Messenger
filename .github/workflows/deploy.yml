@@ -1,0 +1,113 @@
+name: Deploy
+
+# Reusable deployment. Called by ci.yml (staging, every green main) and release.yml
+# (production, every v* tag); also runnable by hand for a rollback to any image tag.
+#
+# Two targets, each enabled purely by configuration on the GitHub environment:
+#   • Render      — secret RENDER_DEPLOY_HOOK_BACKEND (+ optional RENDER_DEPLOY_HOOK_FRONTEND);
+#                   the hook redeploys the service from the given git ref. Health is polled on
+#                   variable BACKEND_URL when set.
+#   • Kubernetes  — variable EKS_CLUSTER_NAME + secret AWS_DEPLOY_ROLE_ARN (OIDC, no static keys);
+#                   kustomize pins both images to the tag and waits for the rollouts.
+# Environments carry their own reviewers (Settings → Environments); production should require one.
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: staging | production
+        required: true
+        type: string
+      image_tag:
+        description: image tag to deploy (sha-<commit> or a semver like 1.4.0)
+        required: true
+        type: string
+      git_ref:
+        description: git ref Render should build from
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: target environment
+        required: true
+        type: choice
+        options: [staging, production]
+      image_tag:
+        description: image tag to deploy (sha-<commit> or 1.4.0)
+        required: true
+        type: string
+      git_ref:
+        description: git ref Render should build from
+        required: true
+        type: string
+        default: main
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  render:
+    name: Render · ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ vars.BACKEND_URL }}
+    env:
+      HOOK_BACKEND: ${{ secrets.RENDER_DEPLOY_HOOK_BACKEND }}
+      HOOK_FRONTEND: ${{ secrets.RENDER_DEPLOY_HOOK_FRONTEND }}
+      BACKEND_URL: ${{ vars.BACKEND_URL }}
+    steps:
+      - name: Trigger the backend deploy hook
+        if: env.HOOK_BACKEND != ''
+        run: |
+          curl -fsS -X POST "${HOOK_BACKEND}&ref=${{ inputs.git_ref }}" -o /dev/null -w "render backend: HTTP %{http_code}\n"
+      - name: Trigger the frontend deploy hook
+        if: env.HOOK_FRONTEND != ''
+        run: |
+          curl -fsS -X POST "${HOOK_FRONTEND}&ref=${{ inputs.git_ref }}" -o /dev/null -w "render frontend: HTTP %{http_code}\n"
+      - name: Wait for readiness
+        if: env.HOOK_BACKEND != '' && env.BACKEND_URL != ''
+        run: |
+          echo "polling ${BACKEND_URL}/actuator/health/readiness for up to 10 minutes"
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /tmp/h -w '%{http_code}' -m 10 "${BACKEND_URL}/actuator/health/readiness" || true)
+            if [ "$code" = "200" ] && grep -q '"UP"' /tmp/h; then
+              echo "ready after ~$((i*10))s"; curl -s -m 10 "${BACKEND_URL}/actuator/info" || true; exit 0
+            fi
+            sleep 10
+          done
+          echo "backend did not become ready"; exit 1
+      - name: Nothing configured
+        if: env.HOOK_BACKEND == ''
+        run: echo "RENDER_DEPLOY_HOOK_BACKEND is not set on environment '${{ inputs.environment }}'; skipping Render."
+
+  kubernetes:
+    name: Kubernetes · ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    if: vars.EKS_CLUSTER_NAME != ''
+    environment:
+      name: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Configure AWS credentials (OIDC — no long-lived keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+      - name: Point kubectl at EKS
+        run: aws eks update-kubeconfig --name "${{ vars.EKS_CLUSTER_NAME }}"
+      - name: Roll out ${{ inputs.image_tag }}
+        working-directory: infrastructure/kubernetes
+        run: |
+          kustomize edit set image \
+            ghcr.io/${{ github.repository_owner }}/cipherchat-backend=ghcr.io/${{ github.repository_owner }}/cipherchat-backend:${{ inputs.image_tag }} \
+            ghcr.io/${{ github.repository_owner }}/cipherchat-frontend=ghcr.io/${{ github.repository_owner }}/cipherchat-frontend:${{ inputs.image_tag }}
+          kubectl apply -k .
+          kubectl -n cipherchat rollout status deployment/cipherchat-backend --timeout=5m
+          kubectl -n cipherchat rollout status deployment/cipherchat-frontend --timeout=3m
+      - name: Smoke
+        run: |
+          kubectl -n cipherchat get pods -o wide
+          kubectl -n cipherchat exec deploy/cipherchat-backend -- wget -qO- http://127.0.0.1:8080/actuator/health/readiness

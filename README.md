@@ -10,6 +10,8 @@ conversations in a third-party SaaS — legal clinics, healthcare practices, new
 *Exactly-once delivery enforced by the database. DMs even the server admin can't read.*
 
 ![CI](https://github.com/simran1002/CipherChat_Messenger/actions/workflows/ci.yml/badge.svg)
+![CodeQL](https://github.com/simran1002/CipherChat_Messenger/actions/workflows/codeql.yml/badge.svg)
+![Release](https://img.shields.io/github/v/release/simran1002/CipherChat_Messenger?include_prereleases&label=release)
 ![Java](https://img.shields.io/badge/Java-21-b07219)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-4.1-6db33f)
 ![Kafka](https://img.shields.io/badge/Kafka-outbox%20%2B%20DLT-231f20)
@@ -172,6 +174,24 @@ cd chat-front && npm test        # components, hooks, offline queue, crypto know
 Integration suites exercise the *contract*, not the code: auth rotation and replayed-cookie rejection, double-send absorption with gapless sequences, private-room 403s, E2EE replay `409`, a Kafka-fed notification appearing exactly once, a STOMP send ACKed and broadcast to another socket. CI runs them against service containers, gates coverage with JaCoCo, formats with Spotless, scans lockfiles and images with Trivy, publishes images to GHCR and deploys through a manually approved environment.
 
 Crypto (client) is pinned to **RFC 7748 / 8032 / 5869 and NIST GCM test vectors**, with tamper, replay, out-of-order and rotation-boundary suites and a committed golden transcript. The server's TOTP is checked against the **RFC 6238** vectors.
+
+## CI/CD
+
+Three workflows under `.github/workflows`, plus CodeQL and Dependabot. Full stack inventory: [docs/TECH_STACK.md](docs/TECH_STACK.md).
+
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `ci.yml` | every push and PR | Spotless → unit → Testcontainers integration suites → JaCoCo gate; frontend lint/typecheck/test/build; Trivy dependency scan (SARIF to the Security tab); kubeconform + `terraform validate` + Compose config; images built and scanned. On `main`: images pushed to GHCR as `sha-<commit>` and `main`, then **staging** deploy |
+| `release.yml` | tag `vX.Y.Z` | Jar built with the tag as its version (`/actuator/info`), images pushed as `X.Y.Z`, `X.Y`, `latest`, scanned, CycloneDX SBOMs, GitHub Release with generated notes and checksummed assets, then **production** deploy behind environment approval |
+| `deploy.yml` | called by the two above, or run by hand for a rollback to any tag | Render deploy hooks (`RENDER_DEPLOY_HOOK_BACKEND`/`_FRONTEND` secrets, readiness polled on `BACKEND_URL`) and/or Kubernetes on EKS via OIDC (`EKS_CLUSTER_NAME`, `AWS_DEPLOY_ROLE_ARN`); both targets enabled purely by environment configuration |
+| `codeql.yml` | push, PR, weekly | Static analysis, Java and TypeScript, security-extended queries |
+| `dependabot.yml` | weekly | Maven, npm, Docker base images, Actions; grouped PRs |
+
+Cut a release:
+
+```bash
+git tag v1.0.0 && git push origin v1.0.0
+```
 
 ## Verification status
 

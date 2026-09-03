@@ -1,0 +1,178 @@
+name: Release
+
+# Tag-driven releases:  git tag v1.4.0 && git push origin v1.4.0
+#   1. backend jar built with the tag as its version (visible at /actuator/info)
+#   2. images pushed as  <image>:1.4.0  <image>:1.4  <image>:latest  <image>:sha-<commit>
+#   3. CycloneDX SBOMs generated from the pushed images
+#   4. GitHub Release with generated notes (.github/release.yml categories) + jar + SBOMs + checksums
+#   5. production deploy through deploy.yml (protected environment → reviewers approve)
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+env:
+  JAVA_VERSION: "21"
+  TRIVY_VERSION: v0.74.0
+  REGISTRY: ghcr.io
+
+jobs:
+  version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - id: v
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [[ "$VERSION" == *-* ]]; then echo "prerelease=true" >> "$GITHUB_OUTPUT"; else echo "prerelease=false" >> "$GITHUB_OUTPUT"; fi
+
+  backend-jar:
+    name: Backend jar (versioned)
+    runs-on: ubuntu-latest
+    needs: version
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+      - name: Stamp the tag into the build (pom version + build-info)
+        run: ./mvnw -B -q -ntp versions:set -DnewVersion=${{ needs.version.outputs.version }} -DgenerateBackupPoms=false
+      - name: Package (tests already gated on main by CI)
+        run: ./mvnw -B -ntp -DskipTests package
+      - name: Rename and checksum
+        run: |
+          cp target/cipherchat-${{ needs.version.outputs.version }}.jar cipherchat-backend-${{ needs.version.outputs.version }}.jar
+          sha256sum cipherchat-backend-${{ needs.version.outputs.version }}.jar > cipherchat-backend-${{ needs.version.outputs.version }}.jar.sha256
+      - uses: actions/upload-artifact@v6
+        with:
+          name: backend-jar
+          path: |
+            backend/cipherchat-backend-*.jar
+            backend/cipherchat-backend-*.jar.sha256
+          retention-days: 30
+
+  images:
+    name: Images · ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            context: ./backend
+            image: ghcr.io/${{ github.repository_owner }}/cipherchat-backend
+            build-args: |
+              APP_VERSION=${{ needs.version.outputs.version }}
+          - name: frontend
+            context: ./chat-front
+            image: ghcr.io/${{ github.repository_owner }}/cipherchat-frontend
+            build-args: |
+              VITE_API_URL=${{ vars.PRODUCTION_API_URL || 'http://localhost:8080' }}
+    outputs:
+      backend-digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image tags (semver from the git tag)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ matrix.image }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=long
+            type=raw,value=latest,enable=${{ needs.version.outputs.prerelease == 'false' }}
+          labels: |
+            org.opencontainers.image.title=cipherchat-${{ matrix.name }}
+            org.opencontainers.image.version=${{ needs.version.outputs.version }}
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: ${{ matrix.build-args }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,scope=${{ matrix.name }},mode=max
+      - name: Vulnerability gate on the pushed image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          image-ref: ${{ matrix.image }}:${{ needs.version.outputs.version }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: SBOM (CycloneDX)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          scan-type: image
+          image-ref: ${{ matrix.image }}:${{ needs.version.outputs.version }}
+          format: cyclonedx
+          output: sbom-${{ matrix.name }}-${{ needs.version.outputs.version }}.cdx.json
+      - uses: actions/upload-artifact@v6
+        with:
+          name: sbom-${{ matrix.name }}
+          path: sbom-${{ matrix.name }}-*.cdx.json
+          retention-days: 90
+
+  github-release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    needs: [version, backend-jar, images]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums for every asset
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: CipherChat ${{ needs.version.outputs.version }}
+          generate_release_notes: true
+          prerelease: ${{ needs.version.outputs.prerelease == 'true' }}
+          files: dist/*
+          body: |
+            ## Images
+            - `ghcr.io/${{ github.repository_owner }}/cipherchat-backend:${{ needs.version.outputs.version }}`
+            - `ghcr.io/${{ github.repository_owner }}/cipherchat-frontend:${{ needs.version.outputs.version }}`
+
+            Both scanned (Trivy, HIGH/CRITICAL, fixed-only) and shipped with CycloneDX SBOMs below.
+            Runtime verification status per claim: see *Verification status* in the README.
+
+  deploy-production:
+    name: Deploy · production
+    needs: [version, github-release]
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: production
+      image_tag: ${{ needs.version.outputs.version }}
+      git_ref: ${{ github.ref_name }}
+    secrets: inherit

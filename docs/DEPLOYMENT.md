@@ -73,9 +73,22 @@ What the manifests encode and why:
 | HPA 2–10 on CPU 65 % (WS-sessions metric documented) | connection-bound service |
 | ALB `idle_timeout 3600`, target-type `ip` | long-lived WebSockets |
 
-### CI/CD — `.github/workflows/ci.yml`
+### CI/CD — `.github/workflows/`
 
-`backend` (Spotless → unit → Testcontainers ITs → JaCoCo gate) and `frontend` (lint → typecheck → test → build) run on every push/PR; `sca` scans lockfiles (Trivy, fails on CRITICAL/HIGH fixable); `images` builds both containers, scans them, and pushes to GHCR on the default branch; `deploy` (environment `production`, manual approval) assumes an AWS role via OIDC, `kustomize edit set image` to the commit SHA, applies, and waits for the rollout.
+**`ci.yml` (every push and PR).** Backend: Spotless, unit tests, Testcontainers integration suites against real Postgres 17, Redis 7 and Kafka, merged JaCoCo gate. Frontend: lint, typecheck, Vitest, production build. Security: Trivy over the Maven tree (resolved into `~/.m2` first, scanned offline so Maven Central rate limits cannot fail the job) and the npm lockfile, uploaded as SARIF. Infra: kubeconform against the 1.30 schemas, `terraform fmt`/`validate` with no backend, Compose config for every profile. Images: built, scanned (HIGH/CRITICAL, fixed-only, blocking) and, on `main` only, pushed to GHCR as `sha-<commit>` and `main`; then `deploy.yml` runs for the **staging** environment.
+
+**`release.yml` (tag `vX.Y.Z`).** The tag becomes the Maven version (`versions:set`) so the jar and `/actuator/info` carry it. Images are pushed as `X.Y.Z`, `X.Y`, `sha-<commit>` and, for non-prereleases, `latest`; each is scanned again and gets a CycloneDX SBOM. A GitHub Release is created with generated notes (categories in `.github/release.yml`), the jar, both SBOMs and `SHA256SUMS.txt`. Finally `deploy.yml` runs for **production**, which should require a reviewer (Settings → Environments → production → Required reviewers).
+
+**`deploy.yml` (reusable and manual).** Inputs: `environment`, `image_tag`, `git_ref`. Two targets, each active only when its configuration exists on the GitHub environment:
+
+| Target | Configuration | Behaviour |
+|---|---|---|
+| Render | secret `RENDER_DEPLOY_HOOK_BACKEND` (and `RENDER_DEPLOY_HOOK_FRONTEND`), variable `BACKEND_URL` | POSTs the hook with `ref=<git_ref>`, then polls `/actuator/health/readiness` for up to 10 minutes and prints `/actuator/info` |
+| Kubernetes | variable `EKS_CLUSTER_NAME` (+ `AWS_REGION`), secret `AWS_DEPLOY_ROLE_ARN` | OIDC to AWS, `kustomize edit set image` to the tag, `kubectl apply -k`, waits for both rollouts, smoke-checks readiness inside the pod |
+
+Rollback is the manual form of the same workflow with an older `image_tag`. `render.yaml` sets `autoDeploy: false` so Render ships only what CI has passed; create the hooks in the Render dashboard (service → Settings → Deploy Hook) and paste them into the GitHub environment secrets.
+
+**`codeql.yml`** runs security-extended queries for Java and TypeScript on push, PR and weekly. **Dependabot** opens grouped weekly PRs for Maven, npm, Docker base images and Actions.
 
 ## Operations checklist
 

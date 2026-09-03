@@ -1,0 +1,18 @@
+# Line endings: normalise to LF in the repository; scripts must stay LF to run on Linux runners.
+* text=auto
+*.sh text eol=lf
+mvnw text eol=lf
+*.cmd text eol=crlf
+
+# GitHub Linguist — language statistics reflect the platform, which is the Java backend.
+# The React client is a thin STOMP/REST consumer of it and is excluded from the language bar;
+# generated bundles, lockfiles and fixtures never count.
+chat-front/** linguist-detectable=false
+chat-front/package-lock.json linguist-generated=true
+backend/mvnw linguist-vendored=true
+backend/mvnw.cmd linguist-vendored=true
+backend/.mvn/** linguist-vendored=true
+docs/** linguist-documentation=true
+load/** linguist-detectable=false
+scripts/** linguist-detectable=false
+*.postman_collection.json linguist-generated=true

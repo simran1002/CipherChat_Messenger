@@ -1,0 +1,35 @@
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      spring:
+        patterns: ["org.springframework*"]
+      test:
+        patterns: ["org.testcontainers*", "org.junit*", "org.assertj*", "org.mockito*"]
+    labels: [dependencies, backend]
+
+  - package-ecosystem: npm
+    directory: /chat-front
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      dev-tooling:
+        dependency-type: development
+    labels: [dependencies, frontend]
+
+  - package-ecosystem: docker
+    directories: [/backend, /chat-front]
+    schedule:
+      interval: weekly
+    labels: [dependencies, docker]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels: [dependencies, ci]

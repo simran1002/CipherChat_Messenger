@@ -10,7 +10,7 @@ services:
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
     healthCheckPath: /actuator/health/readiness
-    autoDeploy: true
+    autoDeploy: false      # deploys are triggered by .github/workflows/deploy.yml after CI passes (deploy hook)
     envVars:
       - key: PORT
         value: "8080"
@@ -80,7 +80,7 @@ services:
     dockerfilePath: ./chat-front/Dockerfile
     dockerContext: ./chat-front
     healthCheckPath: /healthz
-    autoDeploy: true
+    autoDeploy: false      # deploys are triggered by .github/workflows/deploy.yml after CI passes (deploy hook)
     envVars:
       - key: VITE_API_URL                       # baked at image build; set to the backend's public URL
         sync: false

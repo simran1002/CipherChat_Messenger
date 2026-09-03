@@ -9,7 +9,12 @@ RUN chmod +x mvnw
 COPY .mvn .mvn
 RUN --mount=type=cache,target=/root/.m2 ./mvnw -q -B dependency:go-offline
 COPY src src
-RUN --mount=type=cache,target=/root/.m2 ./mvnw -q -B -DskipTests package \
+# Release builds pass the git tag (release.yml → APP_VERSION) so the jar and /actuator/info carry it;
+# local and CI-on-main builds leave it empty and keep the pom's SNAPSHOT version.
+ARG APP_VERSION=
+RUN --mount=type=cache,target=/root/.m2 \
+    if [ -n "$APP_VERSION" ]; then ./mvnw -q -B versions:set -DnewVersion="$APP_VERSION" -DgenerateBackupPoms=false; fi \
+ && ./mvnw -q -B -DskipTests package \
  && java -Djarmode=tools -jar target/*.jar extract --layers --launcher --destination extracted
 
 # ── Stage 2: runtime ────────────────────────────────────────────────────────
@@ -25,6 +30,11 @@ COPY --from=build --chown=cipherchat:cipherchat /workspace/extracted/spring-boot
 COPY --from=build --chown=cipherchat:cipherchat /workspace/extracted/snapshot-dependencies/ ./
 COPY --from=build --chown=cipherchat:cipherchat /workspace/extracted/application/ ./
 USER cipherchat
+ARG APP_VERSION=
+LABEL org.opencontainers.image.title="cipherchat-backend" \
+      org.opencontainers.image.description="CipherChat Messenger — Spring Boot backend" \
+      org.opencontainers.image.source="https://github.com/simran1002/CipherChat_Messenger" \
+      org.opencontainers.image.version="${APP_VERSION}"
 
 ENV PORT=8080 \
     UPLOAD_DIR=/data/uploads \
