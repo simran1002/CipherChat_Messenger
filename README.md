@@ -7,20 +7,21 @@
 **Self-hostable secure team messaging** for organizations that can't put sensitive
 conversations in a third-party SaaS — legal clinics, healthcare practices, newsrooms.
 
-*Exactly-once delivery you can watch survive a pod kill. DMs even the server admin can't read.*
+*Exactly-once delivery enforced by the database. DMs even the server admin can't read.*
 
 ![CI](https://github.com/simran1002/CipherChat_Messenger/actions/workflows/ci.yml/badge.svg)
-![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6)
-![Tests](https://img.shields.io/badge/tests-285-brightgreen)
+![Java](https://img.shields.io/badge/Java-21-b07219)
+![Spring Boot](https://img.shields.io/badge/Spring%20Boot-4.1-6db33f)
+![Kafka](https://img.shields.io/badge/Kafka-outbox%20%2B%20DLT-231f20)
 ![E2EE](https://img.shields.io/badge/E2EE-AES--256--GCM%20%2B%20X3DH-8b5cf6)
-![Scale](https://img.shields.io/badge/scale--out-Redis%20%2B%20nginx-dc382d)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 [Why it's different](docs/WHY-DIFFERENT.md) ·
 [Architecture](docs/ARCHITECTURE.md) ·
-[9 ADRs](docs/adr/) ·
-[Demo script](docs/DEMO.md) ·
-[Interview review](docs/INTERVIEW-REVIEW.md)
+[System design](docs/SYSTEM_DESIGN.md) ·
+[API](docs/API.md) ·
+[10 ADRs](docs/adr/) ·
+[Demo script](docs/DEMO.md)
 
 <img src="docs/media/screenshots/chatroom.png" alt="A live room: reactions, @mentions, a pinned message, presence roster, typing indicator — over the exactly-once delivery pipeline" width="900"/>
 
@@ -28,48 +29,33 @@ conversations in a third-party SaaS — legal clinics, healthcare practices, new
 
 ---
 
-## Prove it in 60 seconds
-
-```bash
-docker compose -f docker-compose.scale.yml up --build -d   # LB → 2 replicas → Mongo + Redis
-cd chat-back && npm run demo:failover                      # kills the socket-owning pod mid-stream
-```
-
-```
-✓ every message persisted exactly once — 60 rows / 60 unique of 60
-✓ sequence numbers gap-free & increasing — 1…60   (across the pod switch)
-✓ Bob received every message exactly once — 0 duplicate events
-  retried sends: 30 · reconnects alice=1 bob=1 · failover gap ≈ 2.4s
-PASS — zero lost, zero duplicated across failover
-```
-
-<div align="center">
-<img src="docs/media/failover-demo.svg" alt="Failover verifier killing the socket-owning replica mid-stream — zero messages lost or duplicated" width="720"/>
-</div>
-
 ## The system in one diagram
 
 ```mermaid
 flowchart LR
-    A[Browser A] & B[Browser B] --> LB[nginx<br/>ip_hash sticky]
+    A[Browser A] & B[Browser B] -- HTTPS · WSS/STOMP --> LB[nginx / ALB<br/>least_conn, no sticky sessions]
     LB --> P1[backend pod 1]
     LB --> P2[backend pod 2]
-    P1 & P2 --> M[(MongoDB<br/>messages · E2EE envelopes<br/>unique-index backstops)]
-    P1 & P2 --> R[(Redis<br/>dedup · sequences · rate limits<br/>presence · socket.io pub/sub)]
-    P1 -. /metrics .-> PR[Prometheus]
-    P2 -. /metrics .-> PR
+    P1 & P2 --> PG[(PostgreSQL<br/>truth · unique-index backstops<br/>transactional outbox)]
+    P1 & P2 --> R[(Redis<br/>rate limits · sequences · dedup<br/>presence · WS fan-out)]
+    PG -. outbox .-> K[(Kafka<br/>message · presence · audit events<br/>retry → DLT)]
+    K --> C[consumer groups<br/>notifications · audit · analytics]
+    P1 & P2 -. /actuator/prometheus .-> PR[Prometheus]
+    style PG fill:#14532d,stroke:#16a34a,color:#fff
     style R fill:#7f1d1d,stroke:#dc2626,color:#fff
-    style M fill:#14532d,stroke:#16a34a,color:#fff
+    style K fill:#1f2937,stroke:#6b7280,color:#fff
 ```
+
+One **Java 21 / Spring Boot 4 modular monolith** (Spring Modulith — module boundaries fail the build when violated) in front of three stores with three distinct jobs: **Postgres is truth, Redis is coordination, Kafka is everything that happens afterwards.** Details: [ARCHITECTURE.md](docs/ARCHITECTURE.md), [ADR-0010](docs/adr/0010-java-spring-modular-monolith.md).
 
 ## The four load-bearing guarantees
 
-| Guarantee | Mechanism | Proof |
+| Guarantee | Mechanism | Where it is enforced |
 |---|---|---|
-| **Exactly-once persistence** over at-least-once transport | client UUID + ACK/retry w/ backoff → IndexedDB offline queue → Redis `SET NX` dedup → per-room `INCR` sequences → DB unique-index backstops | integration test double-sends the same UUID and asserts one row; `npm run demo:failover` kills a pod and asserts the ledger |
-| **Operator-proof DMs** | X3DH-lite handshake, per-direction HMAC-SHA256 chains, AES-256-GCM with routing-bound AAD, 256-byte padding, session rotation (200 msgs / 7 days), safety numbers, 8-word recovery code — **attachments included** (per-file keys; the server stores an opaque blob and learns neither content nor file type) | crypto pinned to RFC 7748 / 8032 / 5869 + NIST GCM vectors; tamper/replay/out-of-order/rotation tests; verified live across isolated browser origins **and** by a headless protocol client (`chat-front/scripts/bob-headless.mts`); `db.dmmessages.find()` shows only ciphertext |
-| **Failure survival** | 2+ replicas behind nginx `ip_hash`, `@socket.io/redis-adapter` fan-out, per-user rooms, seeded sequence counters, graceful `SIGTERM` drain (`closeIdleConnections`) | the failover verifier above — zero lost, zero duplicated, sequences continuous across the pod switch |
-| **Content-free observability** | prom-client histograms + counters per pod, in-app live metrics dashboard (`/metrics` route) | every metric passes one test: *could this line reveal what someone said?* Counts, latencies, outcomes only |
+| **Exactly-once persistence** over at-least-once transport | client UUID + ACK/retry → IndexedDB offline queue → Redis `SET NX` dedup → seeded per-room `INCR` sequence → **`UNIQUE (room, sequence)` and `UNIQUE (client_message_id)`** | the database. Redis only makes the common case fast; the unique indexes make a wrong counter or a missed dedup impossible to persist. `MessagingIT` double-sends and asserts one row |
+| **Operator-proof DMs** | X3DH-lite, per-direction HMAC-SHA256 chains, AES-256-GCM with routing-bound AAD, padding, session rotation — attachments included | client crypto pinned to RFC/NIST vectors; server verifies the **Ed25519 prekey signature**, validates envelope structure, and enforces **`UNIQUE (conversation, sender, sessionId, ctr)`** — a counter is spent once, cluster-wide. `DirectMessageIT` replays a counter and gets `409 replayed_counter` |
+| **Failure survival** | stateless pods, Redis pub/sub fan-out, graceful drain (`maxUnavailable: 0`, preStop, grace > shutdown), **transactional outbox** so Kafka being down never fails a send, idempotent consumers with a `processed_events` ledger and DLT | `docker compose … --scale backend=2` and kill a pod; publications queue in Postgres and replay; `KafkaConsumersIT` |
+| **Content-free observability** | Actuator + Micrometer → Prometheus; `cipherchat.*` counters and p50/p95/p99 send latency; structured JSON logs with correlation ids; in-app metrics page | every metric passes one test: *could this line reveal what someone said?* Counts, latencies, outcomes only |
 
 ## The product — one real session
 
@@ -125,8 +111,7 @@ envelope</em>.<br/><br/>
 <tr>
 <td width="50%" valign="top">
 <strong>Content-free observability.</strong> The in-app metrics page reads the
-same registry Prometheus scrapes: delivery rate, dedup hits, live percentiles.
-This session: 16/16 delivered, p95 156 ms.<br/><br/>
+same registry Prometheus scrapes: delivery rate, dedup hits, live percentiles.<br/><br/>
 <img src="docs/media/screenshots/metrics.png" alt="Live metrics dashboard: delivery counters and latency percentiles"/>
 </td>
 <td width="50%" valign="top">
@@ -137,108 +122,53 @@ tests enforce — measured numbers, not adjectives.<br/><br/>
 </tr>
 </table>
 
-**And here is that same DM conversation as the server stores it** — a real
-document from the session above (`db.dmmessages.findOne()`):
+**And here is a DM as the server stores it** — one row of `dm_messages`:
 
-```js
-{
-  conversationId:  ObjectId("6a94063c7c1c21ab58c489af"),
-  senderId:        ObjectId("6a9406027c1c21ab58c4882d"),
-  clientMessageId: "7073f258-63fa-446e-8c96-747c76dab316",   // exactly-once key
-  type: "e2ee/v1",
-  body: "",                                                  // never anything readable
-  envelope: '{"v":1,"sessionId":"9a69f930-9056-4bfa-8490-ef2331ab83cd","ctr":0,
-              "ct":"7rPAYdmK+j5WVlAx7HTJ06xEc0seeOoEqUP7Myoju7jUzC+rBZrcCdVQ1di/i2BqIZ…"}'
-}
+```sql
+ id  | conversation_id | sender_id | client_message_id                    | type    | body | envelope
+-----+-----------------+-----------+--------------------------------------+---------+------+------------------------------------------------------------------
+ 412 | 0f3c…c11        | 9b21…e07  | 7073f258-63fa-446e-8c96-747c76dab316 | e2ee/v1 |      | {"v":1,"sessionId":"9a69f930-…","ctr":0,"ct":"7rPAYdmK+j5WVlAx7HTJ06xEc0se…"}
 ```
 
-The PDF attachment message in that thread is byte-indistinguishable from the
-text ones — same envelope shape, slightly bigger `ct`. The server learned
-neither its name, its type, nor that it was a file at all.
+The unique index on `(conversation_id, sender_id, envelope->>'sessionId', (envelope->>'ctr')::bigint)` is the server's whole cryptographic contribution to the conversation — and the only one it needs.
 
-## Measured, not claimed
+## Stack
 
-Same-harness A/B and load numbers (methodology + caveats in [WHY-DIFFERENT](docs/WHY-DIFFERENT.md)):
-
-| Measurement | Result |
-|---|---|
-| Connection density (`scripts/connflood.mts`): ramp + hold + probe on ONE pod | **10,000/10,000 concurrent sockets, zero failures**; 470 MB RSS (~47 KB/socket); message probe through the held load ACKed 200/200 at **p50 43 ms / p95 95 ms** |
-| k6, 50 VUs across 10 rooms (~59 msg/s, 5× fan-out) via the LB | **ACK p95 176 ms** (p50 19 ms), 100% checks — threshold met |
-| k6, 50 VUs in one hot room (50× fan-out ≈ 2,900 deliveries/s) | p95 2.55 s — the honest stress ceiling, with the fan-out math documented |
-| Hot-path optimization A/B (`scripts/loadgen.mts`, identical harness) | send path 4–5 Mongo round-trips → 1: ACK p50 **284 → ~100 ms**, p95 **489 → ~195 ms** |
-| Failover (auto-targeted socket-owning pod) | 60/60 exactly once, gap ≈ 2.4 s, steady-state ACK p50 14 ms |
-| Frontend first load | chatroom chunk **526 → 107 KB** (emoji dataset lazy-loaded), vendor chunks cache-stable |
-
-> The optimization pass exposed a latent sequence-counter race — which the DB's unique-index
-> backstop caught exactly as designed. The full causal chain is in
-> [INTERVIEW-REVIEW.md](docs/INTERVIEW-REVIEW.md): *optimizations change timing; timing changes
-> expose races; backstops are why you have them.*
-
-## Feature surface
-
-- **Rooms** (server-readable team spaces): membership + roles (owner/admin/member), private
-  rooms with invites, unread watermarks with dashboard badges, @mentions with cross-replica
-  notifications, virtualized message list with cursor pagination, pinned messages, `$text`
-  search, reactions, replies, edit/delete, self-destruct TTL messages, typing indicators as
-  Redis TTL keys (a killed pod can't leave ghost typers), presence with heartbeat (no ghost
-  online), AI summaries /
-  reply suggestions / tone (Claude), file/voice/location messages.
-- **DMs** (end-to-end encrypted): everything the server can't read — including attachments,
-  which upload straight to object storage via presigned PUT when configured (the ciphertext
-  never transits the app server) — with an encrypted sidebar preview cache, key-change
-  banners, safety-number verification,
-  restore/reset flows, an offline queue of pre-sealed envelopes, legacy-plaintext history
-  clearly demarcated — and **on-device search**: the server can't search what it can't read,
-  so search runs over the decrypted messages (and attachment names) on your device.
-- **Auth & sessions:** 15-minute access tokens + rotating refresh cookie (hashed at rest,
-  replay-after-rotation → 401 = theft tripwire), silent refresh, socket re-auth on reconnect,
-  per-device session list with remote revocation ("sign out everywhere else"), and **TOTP
-  two-factor auth** — QR enrollment, single-use backup codes, sealed seeds, and a scoped
-  5-minute pending token that the access-token verifier rejects by construction
-  ([ADR-0009](docs/adr/0009-totp-two-factor-auth.md)).
+| Layer | Choice | Why |
+|---|---|---|
+| Language / framework | Java 21 (virtual threads), Spring Boot 4.1, Spring Modulith | one deployable, compile-time module boundaries, event-driven internals |
+| Data | PostgreSQL 17 + Flyway, Hibernate `validate` only | invariants as constraints; schema owned by migrations |
+| Coordination | Redis 7 (Lua token bucket, INCR sequences, SET NX dedup, TTL presence, pub/sub) | shared across replicas; never a source of truth |
+| Events | Kafka (KRaft) via Modulith transactional outbox; idempotent consumer groups; exponential retry → DLT | durable "afterwards" without touching the send path |
+| Real-time | STOMP over WebSocket, simple broker, Redis cross-pod bridge | no polling fallback → no sticky sessions |
+| Security | Spring Security, HS256 JWT (15 min), rotating hashed refresh tokens, BCrypt(12), TOTP 2FA, RBAC | [SECURITY.md](docs/SECURITY.md) |
+| Attachments | `local` or S3/MinIO driver; presigned PUT for encrypted blobs | ciphertext never transits the app |
+| Resilience | Resilience4j (Anthropic client), Kafka DLT, rate limiter fail-open | degrade, don't cascade |
+| Observability | Actuator, Micrometer/Prometheus, ECS JSON logs, `X-Request-Id` | content-free by construction |
+| Frontend | React 19 + Vite + TypeScript + Tailwind; E2EE client in `src/crypto` | unchanged pages; one STOMP adapter |
+| Delivery | Docker (layered, non-root), Compose (+ scale-out), Kubernetes (HPA/PDB/probes), Terraform (AWS), Render blueprint, GitHub Actions | [DEPLOYMENT.md](docs/DEPLOYMENT.md) |
 
 ## Quickstart
 
 ```bash
-# Full stack (Mongo + Redis + backend + frontend)
-docker compose up --build            # app → http://localhost:3000
-
-# Horizontal-scaling demo (nginx LB → 2 backend replicas)
-docker compose -f docker-compose.scale.yml up --build
-
-# Same, but websocket-only clients behind least_conn (no sticky sessions)
-npm run stack:scale:ws
+docker compose up --build                       # Postgres + Redis + Kafka + backend + frontend → http://localhost:3000
+docker compose -f docker-compose.yml -f docker-compose.scale.yml up --build --scale backend=2   # nginx least_conn → 2 replicas
+docker compose --profile s3 up --build          # + MinIO, uploads via the S3 driver
 ```
 
-Local development — no Docker, no `.env` needed (the Vite proxy handles everything):
+Backend from the IDE with dependencies in Docker, and everything about local work: [LOCAL_DEVELOPMENT.md](docs/LOCAL_DEVELOPMENT.md). API reference: `/swagger-ui.html` on a running backend, or [API.md](docs/API.md).
+
+## Tests & CI
 
 ```bash
-cd chat-back  && npm i && npm run dev    # needs DATABASE + SECRET in chat-back/.env
-cd chat-front && npm i && npm run dev    # http://localhost:3000
+cd backend && ./mvnw test        # unit + Modulith boundary tests (no Docker)
+cd backend && ./mvnw verify      # + Testcontainers integration tests: real Postgres, Redis, Kafka, STOMP
+cd chat-front && npm test        # components, hooks, offline queue, crypto known-answer tests
 ```
 
-Tips: open `http://127.0.0.1:3000` alongside `http://localhost:3000` for **two fully isolated
-users in one browser** (separate origins → separate E2EE keys). Ports taken? `VITE_PORT=3100
-VITE_DEV_API_TARGET=http://localhost:8100 npm run dev` + `PORT=8100 npm run dev` — the proxy
-strips the Origin header, so no CORS config is ever needed in dev. Without `REDIS_URL` the
-backend runs single-node on in-memory implementations of the same interfaces
-([ADR-0002](docs/adr/0002-redis-behind-interfaces.md)).
+Integration suites exercise the *contract*, not the code: auth rotation and replayed-cookie rejection, double-send absorption with gapless sequences, private-room 403s, E2EE replay `409`, a Kafka-fed notification appearing exactly once, a STOMP send ACKed and broadcast to another socket. CI runs them against service containers, gates coverage with JaCoCo, formats with Spotless, scans lockfiles and images with Trivy, publishes images to GHCR and deploys through a manually approved environment.
 
-## Tests & CI — 285 automated tests
-
-```bash
-cd chat-back  && npm test               # 132 unit + socket integration (mongodb-memory-server)
-cd chat-front && npm test               # 153: components, hooks, offline queue, crypto KATs
-k6 run load/k6-chat.js                  # threshold p95 ACK < 250ms (measured 176ms @ 10 rooms)
-cd chat-back && npm run demo:failover   # the kill-a-pod assertion
-cd chat-back && npx tsx scripts/loadgen.mts   # hot-room ACK-RTT percentiles (perf A/B harness)
-```
-
-CI (GitHub Actions): typecheck, lint, full suites — the Redis implementation suite runs against
-a **real Redis service container** — plus production builds of both apps and both Docker images.
-Crypto is pinned to **RFC 7748 / 8032 / 5869 and NIST GCM test vectors**, with tamper, replay,
-out-of-order, and rotation-boundary suites, a committed golden transcript (byte-identical
-re-seal), and WebCrypto↔noble interchangeability checks.
+Crypto (client) is pinned to **RFC 7748 / 8032 / 5869 and NIST GCM test vectors**, with tamper, replay, out-of-order and rotation-boundary suites and a committed golden transcript. The server's TOTP is checked against the **RFC 6238** vectors.
 
 ## Threat model (DMs)
 
@@ -246,31 +176,51 @@ re-seal), and WebCrypto↔noble interchangeability checks.
 |---|---|
 | Server operator / DB dump reading DMs | ciphertext-only storage (messages **and** attachments); keys never leave the browser |
 | Network attacker | TLS + E2EE; AAD binds ciphertext to conversation/sender/session/counter |
-| Ciphertext tampering or replay | GCM tag over AAD; client counter dedup + server unique `(conversation, session, ctr)` index |
-| Key theft from a stolen DB | prekeys are public; refresh tokens & backups stored hashed/wrapped |
+| Ciphertext tampering or replay | GCM tag over AAD; client counter dedup + server unique `(conversation, sender, session, ctr)` index |
+| Mixed-and-matched key bundles | the directory verifies the prekey signature with the identity key before storing |
+| Key theft from a stolen DB | prekeys are public; refresh tokens hashed; TOTP seeds sealed; backups client-encrypted |
 
 | Does NOT protect against | Why |
 |---|---|
 | Metadata (who ↔ whom, when, sizes beyond padding buckets) | routing requires it |
 | A malicious client build served by the operator | inherent to web-delivered E2EE — stated, not hidden |
-| Room content vs the operator | deliberate: server-side AI needs plaintext ([ADR-0004](docs/adr/0004-e2ee-dms-only.md)) |
+| Room content vs the operator | deliberate: server-side AI and search need plaintext ([ADR-0004](docs/adr/0004-e2ee-dms-only.md)) |
+
+## Documentation
+
+| | |
+|---|---|
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | modules, request paths, real-time layer, cross-cutting concerns |
+| [SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) | requirements → estimates → deep dives → failure modes |
+| [DATABASE_DESIGN.md](docs/DATABASE_DESIGN.md) | schema, the indexes that carry the guarantees, connection budget |
+| [KAFKA_DESIGN.md](docs/KAFKA_DESIGN.md) | topics, outbox, idempotent consumers, retry/DLT |
+| [SCALABILITY.md](docs/SCALABILITY.md) | target envelope, stateless-replica rule, what scales how, honest limits |
+| [SECURITY.md](docs/SECURITY.md) | auth, authz, input handling, secrets, audit, E2EE server role |
+| [API.md](docs/API.md) | REST + STOMP map; OpenAPI is the source of truth |
+| [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Render (with the root-cause analysis of the failed deploys), Compose, AWS/Kubernetes |
+| [LOCAL_DEVELOPMENT.md](docs/LOCAL_DEVELOPMENT.md) | run it, test it, environment variables, troubleshooting |
+| [PHASE1_AUDIT.md](docs/PHASE1_AUDIT.md) | what the previous implementation looked like and why it was replaced |
+| [adr/](docs/adr/) | 10 architecture decision records |
 
 ## Repository layout
 
 ```
-chat-back/    Express + Socket.IO + Mongoose (TypeScript, strict)
-  src/sockets/       typed event maps + per-domain handlers
-  src/shared/        reliability layer: interfaces + in-memory + Redis impls
-  src/storage/       file storage: interface + local-disk + S3-compatible drivers
-  src/services/      room authorization authority · hot-path caches
-  scripts/           failover verifier · load generator
-  tests/             unit + integration (mongodb-memory-server, socket.io-client)
-chat-front/   React 18 + Vite + Tailwind (TypeScript, strict)
-  src/crypto/        E2EE: RFC-vectored primitives, X3DH-lite, chains, envelopes, file crypto
-  src/services/      E2EEService, offline queue (IndexedDB v2), API client
-  scripts/           headless E2EE protocol client (bob-headless.mts)
-docs/         WHY-DIFFERENT · ARCHITECTURE · DEMO · INTERVIEW-REVIEW · adr/ (9 ADRs)
-deploy/       nginx LB config          load/    k6 script
+backend/        Java 21 · Spring Boot 4 modular monolith (Maven wrapper included)
+  src/main/java/com/cipherchat/
+    shared/        error contract · principal · events · Redis primitives · Kafka policy · metrics
+    user/ auth/    accounts · JWT/refresh/sessions · TOTP 2FA · audit publishing
+    chatroom/      rooms · exactly-once messages · receipts · search
+    dm/ keys/      E2EE conversations · key directory
+    gateway/       STOMP endpoint · Redis fan-out · presence gateway
+    presence/      online registry · typing · roster
+    notification/ audit/ analytics/   Kafka consumers + read APIs
+    upload/ ai/    storage drivers · Anthropic client behind a circuit breaker
+  src/main/resources/db/migration/   Flyway schema
+  src/test/java/ unit · Modulith boundary · Testcontainers *IT
+chat-front/     React 19 + Vite + TypeScript (E2EE client in src/crypto, STOMP adapter in src/services/stompSocket.ts)
+infrastructure/ kubernetes/ (kustomize) · terraform/ (AWS) · nginx/ (scale-out LB)
+docs/           design docs · adr/ · media/
+docker-compose.yml · docker-compose.scale.yml · render.yaml · .github/workflows/ci.yml
 ```
 
 <div align="center">
