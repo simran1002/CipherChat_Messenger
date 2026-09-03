@@ -11,7 +11,8 @@ spring:
       enabled: true            # Java 21: one virtual thread per request/consumer — cheap blocking I/O
 
   datasource:
-    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/cipherchat}
+    # Either a full JDBC URL, or host/port/name parts (managed platforms such as Render expose those separately).
+    url: ${DATABASE_URL:jdbc:postgresql://${DATABASE_HOST:localhost}:${DATABASE_PORT:5432}/${DATABASE_NAME:cipherchat}}
     username: ${DATABASE_USER:cipherchat}
     password: ${DATABASE_PASSWORD:cipherchat}
     hikari:

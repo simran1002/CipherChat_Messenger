@@ -16,10 +16,20 @@ services:
         value: "8080"
       - key: SPRING_PROFILES_ACTIVE
         value: prod
-      - key: DATABASE_URL
+      # Render exposes postgres://… connection strings; JDBC needs jdbc:postgresql://host:port/db,
+      # so the parts are passed separately and application.yaml assembles the JDBC URL.
+      - key: DATABASE_HOST
         fromDatabase:
           name: cipherchat-db
-          property: connectionString          # postgres://… — converted below
+          property: host
+      - key: DATABASE_PORT
+        fromDatabase:
+          name: cipherchat-db
+          property: port
+      - key: DATABASE_NAME
+        fromDatabase:
+          name: cipherchat-db
+          property: database
       - key: DATABASE_USER
         fromDatabase:
           name: cipherchat-db
@@ -28,10 +38,6 @@ services:
         fromDatabase:
           name: cipherchat-db
           property: password
-      - key: SPRING_DATASOURCE_URL              # Boot reads this over cipherchat's DATABASE_URL default
-        fromDatabase:
-          name: cipherchat-db
-          property: connectionString
       - key: REDIS_URL
         fromService:
           type: keyvalue
