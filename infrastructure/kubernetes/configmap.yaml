@@ -1,0 +1,27 @@
+# Non-secret runtime configuration. Everything here has a safe default in
+# application.yaml; this is where an environment overrides it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cipherchat-backend
+  namespace: cipherchat
+data:
+  SPRING_PROFILES_ACTIVE: "prod"
+  PORT: "8080"
+  DATABASE_URL: "jdbc:postgresql://cipherchat-db.internal:5432/cipherchat"   # RDS endpoint
+  DB_POOL_SIZE: "10"                       # RDS max_connections / replica count, with headroom
+  REDIS_URL: "redis://cipherchat-redis.internal:6379"                        # ElastiCache primary
+  KAFKA_BOOTSTRAP_SERVERS: "b-1.cipherchat.kafka.internal:9092,b-2.cipherchat.kafka.internal:9092"  # MSK
+  KAFKA_PARTITIONS: "12"
+  KAFKA_REPLICATION: "3"
+  KAFKA_CONSUMER_CONCURRENCY: "3"
+  CORS_ALLOWED_ORIGINS: "https://chat.example.com"
+  COOKIE_SECURE: "true"
+  STORAGE_DRIVER: "s3"
+  S3_BUCKET: "cipherchat-uploads"
+  AWS_REGION: "us-east-1"
+  S3_PUBLIC_BASE_URL: "https://uploads.chat.example.com"   # CloudFront in front of the bucket
+  PUBLIC_BASE_URL: "https://api.chat.example.com"
+  AI_BASE_URL: "https://api.anthropic.com"
+  LOG_FORMAT: "ecs"
+  LOG_LEVEL: "INFO"

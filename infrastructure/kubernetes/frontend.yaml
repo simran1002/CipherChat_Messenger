@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cipherchat-frontend
+  namespace: cipherchat
+  labels:
+    app.kubernetes.io/name: cipherchat-frontend
+    app.kubernetes.io/part-of: cipherchat
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cipherchat-frontend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cipherchat-frontend
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: frontend
+          image: ghcr.io/simran1002/cipherchat-frontend:latest
+          ports:
+            - name: http
+              containerPort: 80
+          # The API origin is baked into the bundle at image build time (VITE_API_URL);
+          # the SPA talks to api.chat.example.com directly, nginx only serves static files.
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 15
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cipherchat-frontend
+  namespace: cipherchat
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: cipherchat-frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

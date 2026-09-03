@@ -1,0 +1,119 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cipherchat-backend
+  namespace: cipherchat
+  labels:
+    app.kubernetes.io/name: cipherchat-backend
+    app.kubernetes.io/part-of: cipherchat
+spec:
+  replicas: 2                      # floor; the HPA scales from here
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0            # never drop below capacity during a deploy
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cipherchat-backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cipherchat-backend
+        app.kubernetes.io/part-of: cipherchat
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /actuator/prometheus
+        prometheus.io/port: "8080"
+    spec:
+      serviceAccountName: cipherchat-backend      # IRSA → S3 bucket access, no static AWS keys
+      terminationGracePeriodSeconds: 45           # > server.shutdown timeout (30s) so in-flight requests drain
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: cipherchat-backend
+      containers:
+        - name: backend
+          image: ghcr.io/simran1002/cipherchat-backend:latest   # CI tags with the git SHA; overridden by kustomize
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: cipherchat-backend
+            - secretRef:
+                name: cipherchat-backend-secrets
+          env:
+            - name: HOSTNAME                       # → logging.structured.ecs.service.node-name (pod tag in logs)
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          resources:
+            requests:
+              cpu: 500m
+              memory: 768Mi
+            limits:
+              memory: 1Gi                          # no CPU limit: avoid throttling latency-sensitive WS traffic
+          startupProbe:                            # JVM + Flyway + Kafka admin can take a while on cold nodes
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 5
+            failureThreshold: 24                   # up to 2 minutes
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:                          # DB + Redis + Kafka reachable → take traffic
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 5"]   # let the LB stop routing before SIGTERM lands
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cipherchat-backend
+  namespace: cipherchat
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/cipherchat-backend   # from terraform output
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cipherchat-backend
+  namespace: cipherchat
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cipherchat-backend

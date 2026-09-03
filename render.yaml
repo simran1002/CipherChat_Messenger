@@ -1,0 +1,89 @@
+# Render Blueprint — deploy configuration as code (see docs/DEPLOYMENT.md § Render).
+# Docker runtime: the image pins Java 21, so the build no longer depends on
+# Render's Node toolchain or on commands typed into the dashboard.
+services:
+  - type: web
+    name: cipherchat-backend
+    runtime: docker
+    plan: starter
+    region: oregon
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /actuator/health/readiness
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: SPRING_PROFILES_ACTIVE
+        value: prod
+      - key: DATABASE_URL
+        fromDatabase:
+          name: cipherchat-db
+          property: connectionString          # postgres://… — converted below
+      - key: DATABASE_USER
+        fromDatabase:
+          name: cipherchat-db
+          property: user
+      - key: DATABASE_PASSWORD
+        fromDatabase:
+          name: cipherchat-db
+          property: password
+      - key: SPRING_DATASOURCE_URL              # Boot reads this over cipherchat's DATABASE_URL default
+        fromDatabase:
+          name: cipherchat-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: cipherchat-redis
+          property: connectionString
+      - key: KAFKA_BOOTSTRAP_SERVERS            # Render has no Kafka — external broker (Upstash/Confluent/Redpanda)
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SEAL_SECRET
+        generateValue: true
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false                             # https://<frontend>.onrender.com
+      - key: PUBLIC_BASE_URL
+        sync: false                             # https://<backend>.onrender.com
+      - key: STORAGE_DRIVER
+        value: local                            # demo only; set s3 + S3_* for anything durable
+      - key: UPLOAD_DIR
+        value: /data/uploads
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: LOG_FORMAT
+        value: ecs
+    disk:
+      name: uploads
+      mountPath: /data/uploads
+      sizeGB: 1
+
+  - type: web
+    name: cipherchat-frontend
+    runtime: docker
+    plan: starter
+    region: oregon
+    dockerfilePath: ./chat-front/Dockerfile
+    dockerContext: ./chat-front
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: VITE_API_URL                       # baked at image build; set to the backend's public URL
+        sync: false
+
+  - type: keyvalue
+    name: cipherchat-redis
+    plan: starter
+    region: oregon
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []                             # internal only
+
+databases:
+  - name: cipherchat-db
+    plan: basic-256mb
+    region: oregon
+    postgresMajorVersion: "17"

@@ -1,0 +1,41 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: cipherchat-backend
+  namespace: cipherchat
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cipherchat-backend
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 65
+    # With the Prometheus adapter installed, scale on open WebSocket sessions
+    # instead of CPU — a chat server is connection-bound before it is CPU-bound.
+    # - type: Pods
+    #   pods:
+    #     metric:
+    #       name: cipherchat_ws_sessions
+    #     target:
+    #       type: AverageValue
+    #       averageValue: "2000"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300     # WebSocket clients reconnect on scale-down; don't flap
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
