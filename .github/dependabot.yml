@@ -1,35 +1,51 @@
+# Version updates: monthly, one grouped PR per ecosystem, at most two open at a time.
+# Major bumps of runtimes (JDK/Node/nginx base images) and Actions are excluded here — those are
+# decisions taken deliberately. Security updates are separate (Settings → Code security) and
+# keep arriving as soon as an advisory matches a dependency.
 version: 2
 updates:
   - package-ecosystem: maven
     directory: /backend
     schedule:
-      interval: weekly
-      day: monday
+      interval: monthly
+    open-pull-requests-limit: 2
     groups:
-      spring:
-        patterns: ["org.springframework*"]
-      test:
-        patterns: ["org.testcontainers*", "org.junit*", "org.assertj*", "org.mockito*"]
+      maven-all:
+        patterns: ["*"]
+        update-types: [minor, patch]
     labels: [dependencies, backend]
 
   - package-ecosystem: npm
     directory: /chat-front
     schedule:
-      interval: weekly
-      day: monday
+      interval: monthly
+    open-pull-requests-limit: 2
     groups:
-      dev-tooling:
-        dependency-type: development
+      npm-all:
+        patterns: ["*"]
+        update-types: [minor, patch]
     labels: [dependencies, frontend]
 
   - package-ecosystem: docker
     directories: [/backend, /chat-front]
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 2
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
     labels: [dependencies, docker]
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 2
+    groups:
+      actions-all:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
     labels: [dependencies, ci]
