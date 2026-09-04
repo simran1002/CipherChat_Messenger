@@ -1,6 +1,5 @@
 # Version updates: monthly, one grouped PR per ecosystem, at most two open at a time.
-# Major bumps of runtimes (JDK/Node/nginx base images) and Actions are excluded here — those are
-# decisions taken deliberately. Security updates are separate (Settings → Code security) and
+# Major bumps are excluded everywhere — those are decisions taken deliberately, not maintenance. Security updates are separate (Settings → Code security) and
 # keep arriving as soon as an advisory matches a dependency.
 version: 2
 updates:
@@ -13,6 +12,9 @@ updates:
       maven-all:
         patterns: ["*"]
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
     labels: [dependencies, backend]
 
   - package-ecosystem: npm
@@ -24,6 +26,9 @@ updates:
       npm-all:
         patterns: ["*"]
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
     labels: [dependencies, frontend]
 
   - package-ecosystem: docker
