@@ -2,3 +2,5 @@
 infrastructure/terraform/.terraform/
 # Local upload storage written by the backend
 backend/data/
+# Retired Node backend kept on disk only (holds a local .env); not part of the repository
+chat-back/
