@@ -211,10 +211,13 @@ Every row below was produced in this repository's state, on one Windows 11 lapto
 | Backend image builds from an empty cache | VERIFIED | `docker compose build --no-cache backend` — twice: the first image built but could not start (layered-jar launcher layout, fixed), the rebuilt image was not observed starting before the environment failed (next row) |
 | Kubernetes manifests | DESIGNED | kubeconform: 11 objects valid against the 1.30 schemas; not applied to a cluster |
 | Terraform | DESIGNED | `terraform fmt`, `init`, `validate` pass; not planned or applied against an AWS account |
-| Compose stack end to end, Redis/Kafka failure drills, two-replica fan-out, k6 latency, image scan, `EXPLAIN` of the hot queries | NOT VERIFIED | the host disk filled during the image build, the Docker VM went read-only and WSL wedged past what a non-elevated session can reset. Everything is scripted: `bash scripts/verify-all.sh` runs all of it and writes `docs/VERIFICATION-RUN.md` |
+| Compose stack end to end (health, auth, exactly-once send, private-room 403s, E2EE replay 409, Kafka notification, consumer ledger) | VERIFIED | `scripts/verify-stack.py`: 19/19 checks against the real Compose stack |
+| Latency and throughput on one pod | MEASURED | k6, 30 senders in 5 rooms, 43 msg/s: send → ACK p50 23 ms / p95 54 ms, broadcast p50 27 ms / p95 64 ms, 0 duplicates persisted. Full method, caveats and the four defects the measurement found: [docs/BENCHMARKS.md](docs/BENCHMARKS.md) |
+| Connection density on one pod | MEASURED | 5,000 STOMP sockets opened and held with 0 failures (≈ 97 KB heap per socket); broadcast to all 5,000 subscribers of one room reaches 100 % of them at p50 1.0 s / p95 6.6 s, the serial cost of one very large room on the simple broker. 10,000 was not completed on the shared VM: see [docs/BENCHMARKS.md](docs/BENCHMARKS.md) |
+| Redis/Kafka failure drills, two-replica fan-out, `EXPLAIN` of the hot queries, image scan of the running stack | NOT VERIFIED | scripted (`bash scripts/verify-all.sh` → `docs/VERIFICATION-RUN.md`); not run in this pass |
 | Render deployment | NOT VERIFIED | the exact image was built and started locally; the hosted deploy was not observed (no Render account/logs) |
 | GitHub Actions run | NOT VERIFIED | workflow is structurally validated; it has not run on a pushed commit |
-| 10,000 concurrent sockets / 200 msg/s / p95 < 250 ms | DESIGN TARGETS | the 10k figure was measured on the previous Node implementation ([WHY-DIFFERENT.md](docs/WHY-DIFFERENT.md)); not re-measured here |
+| 200 msg/s / p95 < 250 ms on one pod | PARTLY MEASURED | p95 well under 250 ms at 43 msg/s (above); 200 msg/s was not driven on this VM. The 10,000-socket figure remains the previous Node implementation's ([WHY-DIFFERENT.md](docs/WHY-DIFFERENT.md)); the Java gateway is measured to 5,000 |
 
 ## Threat model (DMs)
 

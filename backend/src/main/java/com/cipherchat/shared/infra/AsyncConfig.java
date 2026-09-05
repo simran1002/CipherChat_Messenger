@@ -4,6 +4,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadPoolExecutor;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.AsyncConfigurer;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
@@ -27,6 +28,9 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 @Configuration
 public class AsyncConfig implements AsyncConfigurer {
 
+    /** Bean name of the executor reserved for socket fan-out; never shared with externalization. */
+    public static final String FANOUT_EXECUTOR = "fanoutExecutor";
+
     private final int maxThreads;
     private final int queueCapacity;
 
@@ -36,13 +40,26 @@ public class AsyncConfig implements AsyncConfigurer {
         this.queueCapacity = queueCapacity;
     }
 
+    /**
+     * Socket fan-out only (Redis publish + at most one read). Isolated from the default event
+     * executor so a Kafka stall in externalization can never delay a live broadcast.
+     */
+    @Bean(FANOUT_EXECUTOR)
+    public Executor fanoutExecutor() {
+        return build("fanout-", Math.min(8, maxThreads), Math.max(8, maxThreads / 2), queueCapacity);
+    }
+
     @Override
     public Executor getAsyncExecutor() {
+        return build("events-", Math.min(16, maxThreads), maxThreads, queueCapacity);
+    }
+
+    private static ThreadPoolTaskExecutor build(String prefix, int core, int max, int queue) {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setThreadNamePrefix("events-");
-        executor.setCorePoolSize(Math.min(16, maxThreads));
-        executor.setMaxPoolSize(maxThreads);
-        executor.setQueueCapacity(queueCapacity);
+        executor.setThreadNamePrefix(prefix);
+        executor.setCorePoolSize(core);
+        executor.setMaxPoolSize(max);
+        executor.setQueueCapacity(queue);
         executor.setAllowCoreThreadTimeOut(true);
         executor.setKeepAliveSeconds(30);
         // Only if the queue itself overflows: run inline rather than drop a fan-out or an externalization.

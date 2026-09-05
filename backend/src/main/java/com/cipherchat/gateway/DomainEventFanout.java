@@ -4,6 +4,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.modulith.events.ApplicationModuleListener;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 
@@ -19,6 +20,7 @@ import com.cipherchat.shared.events.MessagingEvents.MessagePinned;
 import com.cipherchat.shared.events.MessagingEvents.MessageRead;
 import com.cipherchat.shared.events.MessagingEvents.MessageSent;
 import com.cipherchat.shared.events.MessagingEvents.ReactionUpdated;
+import com.cipherchat.shared.infra.AsyncConfig;
 
 /**
  * Domain events → live sessions. Listeners run asynchronously after the
@@ -29,6 +31,10 @@ import com.cipherchat.shared.events.MessagingEvents.ReactionUpdated;
  * most one read, and the annotation's default {@code REQUIRES_NEW} pinned a pooled JDBC
  * connection for every broadcast. Under a burst that exhausted the pool and put the live
  * fan-out behind the database queue (measured: broadcast p95 of 6–10 s at 40 msg/s).
+ *
+ * <p>They also run on their own executor ({@link AsyncConfig#FANOUT_EXECUTOR}): the default
+ * event executor is shared with Kafka externalization, and a broker stall (measured up to 10 s in
+ * the Compose VM) filled it with blocked externalizations while broadcasts queued behind them.
  */
 @Component
 public class DomainEventFanout {
@@ -49,6 +55,7 @@ public class DomainEventFanout {
      * travels on the conversation topic, where only the two participants
      * are subscribed (authorised at SUBSCRIBE time).
      */
+    @Async(AsyncConfig.FANOUT_EXECUTOR)
     @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
     public void on(DirectMessageSent e) {
         DmDtos.MessageView view = dms.view(e.messageId());
@@ -62,6 +69,7 @@ public class DomainEventFanout {
                 "message", e.encrypted() ? "🔒 Encrypted message" : (view.message() == null ? "" : view.message())));
     }
 
+    @Async(AsyncConfig.FANOUT_EXECUTOR)
     @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
     public void on(MessageSent e) {
         MessageView view = messages.view(e.messageId());
@@ -80,29 +88,34 @@ public class DomainEventFanout {
 
     // Room-local UI events (edit/delete/pin/react) — the REST write already committed; tell the live sessions.
 
+    @Async(AsyncConfig.FANOUT_EXECUTOR)
     @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
     public void on(MessageEdited e) {
         fanout.toRoom(e.chatroomId(), "messageEdited", Map.of(
                 "messageId", String.valueOf(e.messageId()), "newText", e.newText()));
     }
 
+    @Async(AsyncConfig.FANOUT_EXECUTOR)
     @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
     public void on(MessageDeleted e) {
         fanout.toRoom(e.chatroomId(), "messageDeleted", Map.of("messageId", String.valueOf(e.messageId())));
     }
 
+    @Async(AsyncConfig.FANOUT_EXECUTOR)
     @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
     public void on(MessagePinned e) {
         fanout.toRoom(e.chatroomId(), "messagePinned", Map.of(
                 "messageId", String.valueOf(e.messageId()), "pinned", e.pinned()));
     }
 
+    @Async(AsyncConfig.FANOUT_EXECUTOR)
     @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
     public void on(ReactionUpdated e) {
         fanout.toRoom(e.chatroomId(), "reactionUpdated", Map.of(
                 "messageId", String.valueOf(e.messageId()), "reactions", messages.reactionsOf(e.messageId())));
     }
 
+    @Async(AsyncConfig.FANOUT_EXECUTOR)
     @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
     public void on(MessageRead e) {
         fanout.toRoom(e.chatroomId(), "messagesRead", Map.of(
@@ -112,6 +125,7 @@ public class DomainEventFanout {
                 "readAt", e.occurredAt().toString()));
     }
 
+    @Async(AsyncConfig.FANOUT_EXECUTOR)
     @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
     public void on(MessageDelivered e) {
         // Clients render the full recipient list, not a delta — one lookup, then everyone agrees.

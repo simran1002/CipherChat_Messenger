@@ -85,7 +85,8 @@ Individually, against a running stack (`docker compose up`):
 python scripts/verify-stack.py            # health, auth, exactly-once send, private-room 403s, DM replay 409, Kafka notification
 python scripts/verify-stack.py --chaos    # + pauses Redis and stops Kafka to check the documented degradation and recovery
 python scripts/verify-fanout.py           # scale-out profile: two sockets on different replicas, ACK + cross-replica broadcast
-docker run --rm -i -e BASE_URL=http://host.docker.internal:8080 grafana/k6 run - < load/k6-stomp.js   # latency/throughput
+docker run --rm -i --network cipherchat_default -e BASE_URL=http://backend:8080 grafana/k6 run - < load/k6-stomp.js   # latency/throughput (in-network: Docker Desktop's port proxy is not the system under test)
+python load/connflood.py --sockets 5000 --users 100   # connection density; see docs/BENCHMARKS.md for the in-network form
 ```
 
 ## Useful endpoints
