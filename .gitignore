@@ -4,3 +4,5 @@ infrastructure/terraform/.terraform/
 backend/data/
 # Retired Node backend kept on disk only (holds a local .env); not part of the repository
 chat-back/
+# Python bytecode from the load/verification scripts
+__pycache__/
