@@ -5,6 +5,7 @@ import java.util.UUID;
 
 import org.springframework.modulith.events.ApplicationModuleListener;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
 
 import com.cipherchat.chatroom.ChatroomDtos.MessageView;
 import com.cipherchat.chatroom.MessageService;
@@ -23,6 +24,11 @@ import com.cipherchat.shared.events.MessagingEvents.ReactionUpdated;
  * Domain events → live sessions. Listeners run asynchronously after the
  * producing transaction commits (Modulith's {@link ApplicationModuleListener}),
  * so a client can never see a message the database has not durably stored.
+ *
+ * <p>They run with {@code propagation = NOT_SUPPORTED}: a broadcast is a Redis publish plus at
+ * most one read, and the annotation's default {@code REQUIRES_NEW} pinned a pooled JDBC
+ * connection for every broadcast. Under a burst that exhausted the pool and put the live
+ * fan-out behind the database queue (measured: broadcast p95 of 6–10 s at 40 msg/s).
  */
 @Component
 public class DomainEventFanout {
@@ -43,7 +49,7 @@ public class DomainEventFanout {
      * travels on the conversation topic, where only the two participants
      * are subscribed (authorised at SUBSCRIBE time).
      */
-    @ApplicationModuleListener
+    @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
     public void on(DirectMessageSent e) {
         DmDtos.MessageView view = dms.view(e.messageId());
         fanout.toConversation(e.conversationId(), "newDirectMessage", view);
@@ -56,7 +62,7 @@ public class DomainEventFanout {
                 "message", e.encrypted() ? "🔒 Encrypted message" : (view.message() == null ? "" : view.message())));
     }
 
-    @ApplicationModuleListener
+    @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
     public void on(MessageSent e) {
         MessageView view = messages.view(e.messageId());
         fanout.toRoom(e.chatroomId(), "newMessage", view);
@@ -74,30 +80,30 @@ public class DomainEventFanout {
 
     // Room-local UI events (edit/delete/pin/react) — the REST write already committed; tell the live sessions.
 
-    @ApplicationModuleListener
+    @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
     public void on(MessageEdited e) {
         fanout.toRoom(e.chatroomId(), "messageEdited", Map.of(
                 "messageId", String.valueOf(e.messageId()), "newText", e.newText()));
     }
 
-    @ApplicationModuleListener
+    @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
     public void on(MessageDeleted e) {
         fanout.toRoom(e.chatroomId(), "messageDeleted", Map.of("messageId", String.valueOf(e.messageId())));
     }
 
-    @ApplicationModuleListener
+    @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
     public void on(MessagePinned e) {
         fanout.toRoom(e.chatroomId(), "messagePinned", Map.of(
                 "messageId", String.valueOf(e.messageId()), "pinned", e.pinned()));
     }
 
-    @ApplicationModuleListener
+    @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
     public void on(ReactionUpdated e) {
         fanout.toRoom(e.chatroomId(), "reactionUpdated", Map.of(
                 "messageId", String.valueOf(e.messageId()), "reactions", messages.reactionsOf(e.messageId())));
     }
 
-    @ApplicationModuleListener
+    @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
     public void on(MessageRead e) {
         fanout.toRoom(e.chatroomId(), "messagesRead", Map.of(
                 "userId", e.userId().toString(),
@@ -106,7 +112,7 @@ public class DomainEventFanout {
                 "readAt", e.occurredAt().toString()));
     }
 
-    @ApplicationModuleListener
+    @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
     public void on(MessageDelivered e) {
         // Clients render the full recipient list, not a delta — one lookup, then everyone agrees.
         fanout.toRoom(e.chatroomId(), "messageDeliveryUpdate", Map.of(
