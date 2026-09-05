@@ -11,7 +11,10 @@ import java.util.stream.Collectors;
 
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import com.cipherchat.shared.api.ApiException;
 
@@ -25,22 +28,35 @@ public class UserService {
 
     private final UserRepository users;
     private final PasswordEncoder passwordEncoder;
+    private final TransactionTemplate tx;
 
-    public UserService(UserRepository users, PasswordEncoder passwordEncoder) {
+    public UserService(UserRepository users, PasswordEncoder passwordEncoder, PlatformTransactionManager txManager) {
         this.users = users;
         this.passwordEncoder = passwordEncoder;
+        this.tx = new TransactionTemplate(txManager);
     }
 
+    /**
+     * BCrypt(12) costs ~250 ms of CPU. Hashing must not happen inside a transaction, or every
+     * registration pins a pooled connection for its whole duration and a sign-up burst starves
+     * the message path (measured: pool acquire waits of 3.7 s with a 20-connection pool).
+     */
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public UserView register(String name, String email, String rawPassword) {
         if (users.existsByEmail(email)) {
             throw ApiException.conflict("email_taken", "User with this email already exists.");
         }
-        User user = users.save(new User(name.trim(), email.trim(), passwordEncoder.encode(rawPassword)));
+        String hash = passwordEncoder.encode(rawPassword);
+        User user = tx.execute(status -> users.save(new User(name.trim(), email.trim(), hash)));
         return UserView.of(user);
     }
 
-    /** Constant-time-safe: a missing user still runs one BCrypt round so timing doesn't reveal existence. */
-    @Transactional(readOnly = true)
+    /**
+     * Constant-time-safe: a missing user still runs one BCrypt round so timing doesn't reveal existence.
+     * Runs outside a transaction for the same reason as {@link #register}: the lookup is one short
+     * repository call, the verification must not hold a connection.
+     */
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public Optional<UserView> authenticate(String email, String rawPassword) {
         Optional<User> user = users.findByEmail(email);
         String hash = user.map(User::getPasswordHash)

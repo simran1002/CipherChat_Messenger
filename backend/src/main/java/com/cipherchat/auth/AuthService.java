@@ -10,7 +10,10 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import com.cipherchat.auth.AuthDtos.LoginResponse;
 import com.cipherchat.shared.api.ApiException;
@@ -43,24 +46,37 @@ public class AuthService {
     private final RefreshCookie cookie;
     private final TwoFactorService twoFactor;
     private final AuditPublisher audit;
+    private final TransactionTemplate tx;
 
     public AuthService(UserService users, JwtService jwt, RefreshTokenService refreshTokens,
-                       RefreshCookie cookie, TwoFactorService twoFactor, AuditPublisher audit) {
+                       RefreshCookie cookie, TwoFactorService twoFactor, AuditPublisher audit,
+                       PlatformTransactionManager txManager) {
         this.users = users;
         this.jwt = jwt;
         this.refreshTokens = refreshTokens;
         this.cookie = cookie;
         this.twoFactor = twoFactor;
         this.audit = audit;
+        this.tx = new TransactionTemplate(txManager);
     }
 
+    /**
+     * register/login run the BCrypt work OUTSIDE a transaction (see UserService) and only then open
+     * one short transaction for the audit event and the session row. The class-level
+     * {@code @Transactional} would otherwise pin a pooled connection across the hash.
+     */
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public LoginResponse register(String name, String email, String password, HttpServletRequest req, HttpServletResponse res) {
         UserView user = users.register(name, email, password);
         log.info("User registered userId={}", user.id());
-        audit.publish(Audited.of(user.id(), "user.registered", "user", user.id().toString(), Map.of(), req.getRemoteAddr()));
-        return LoginResponse.session("User [" + user.name() + "] registered successfully!", startSession(user, req, res), user);
+        String token = tx.execute(status -> {
+            audit.publish(Audited.of(user.id(), "user.registered", "user", user.id().toString(), Map.of(), req.getRemoteAddr()));
+            return startSession(user, req, res);
+        });
+        return LoginResponse.session("User [" + user.name() + "] registered successfully!", token, user);
     }
 
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public LoginResponse login(String email, String password, HttpServletRequest req, HttpServletResponse res) {
         UserView user = users.authenticate(email, password).orElseThrow(() -> {
             audit.publishDetached(Audited.of(null, "user.login_failed", "user", null,
@@ -72,8 +88,11 @@ public class AuthService {
             return LoginResponse.challenge(jwt.issueTwoFactorPendingToken(user.id()));
         }
         log.info("User logged in userId={}", user.id());
-        audit.publish(Audited.of(user.id(), "user.login", "user", user.id().toString(), Map.of("2fa", false), req.getRemoteAddr()));
-        return LoginResponse.session("User logged in successfully!", startSession(user, req, res), user);
+        String token = tx.execute(status -> {
+            audit.publish(Audited.of(user.id(), "user.login", "user", user.id().toString(), Map.of("2fa", false), req.getRemoteAddr()));
+            return startSession(user, req, res);
+        });
+        return LoginResponse.session("User logged in successfully!", token, user);
     }
 
     public LoginResponse completeTwoFactorLogin(String pendingToken, String code, HttpServletRequest req, HttpServletResponse res) {

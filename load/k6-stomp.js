@@ -94,8 +94,15 @@ function parseFrame(raw) {
   return { command, headers, body };
 }
 
+// Each VU registers once (a k6 VU is its own JS runtime, so module state persists across its
+// iterations). Registering per iteration turned the run into a BCrypt storm that measured the
+// password hasher, not the messaging path.
+let restUser = null;
+let chatUser = null;
+
 export function rest() {
-  const user = register("rest");
+  if (!restUser) restUser = register("rest");
+  const user = restUser;
   if (!user) return;
   const list = http.get(`${BASE}/api/v1/chatrooms`, auth(user.token));
   restLatency.add(list.timings.duration);
@@ -107,12 +114,15 @@ export function rest() {
 }
 
 export function chat(data) {
-  const user = register("chat");
-  if (!user) return;
   const roomId = data.rooms[__VU % data.rooms.length];
-  const join = http.post(`${BASE}/api/v1/chatrooms/${roomId}/join`, null, auth(user.token));
-  restLatency.add(join.timings.duration);
-  if (!check(join, { "join 200": (r) => r.status === 200 })) { errors.add(true); return; }
+  if (!chatUser) {
+    chatUser = register("chat");
+    if (!chatUser) return;
+    const join = http.post(`${BASE}/api/v1/chatrooms/${roomId}/join`, null, auth(chatUser.token));
+    restLatency.add(join.timings.duration);
+    if (!check(join, { "join 200": (r) => r.status === 200 })) { errors.add(true); chatUser = null; return; }
+  }
+  const user = chatUser;
 
   const pending = new Map(); // clientMessageId → sentAt (ms)
   const res = ws.connect(WS_URL, {}, function (socket) {
