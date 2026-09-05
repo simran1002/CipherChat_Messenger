@@ -158,7 +158,8 @@ cipherchat:
       public-base-url: ${S3_PUBLIC_BASE_URL:}   # CDN / bucket website origin; blank = virtual-hosted S3 URL
       presign-ttl: 5m
   events:
-    concurrency: ${EVENTS_CONCURRENCY:64}   # max concurrent async event listeners per pod (fan-out, externalization); bounds JDBC pool demand under bursts
+    concurrency: ${EVENTS_CONCURRENCY:64}          # max concurrent async event listeners per pod (fan-out, externalization); bounds JDBC pool demand
+    queue-capacity: ${EVENTS_QUEUE_CAPACITY:50000} # bursts queue here instead of blocking the committing thread
   ai:
     # Any chat-completions-compatible endpoint (self-hosted Ollama / vLLM / LM Studio, or a hosted
     # provider). Both base-url and model must be set for the AI endpoints to be enabled; the key is
