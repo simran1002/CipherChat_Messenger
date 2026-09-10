@@ -59,6 +59,19 @@ jobs:
       HOOK_FRONTEND: ${{ secrets.RENDER_DEPLOY_HOOK_FRONTEND }}
       BACKEND_URL: ${{ vars.BACKEND_URL }}
     steps:
+      - name: Validate hook secrets (shape only; values are never printed)
+        if: env.HOOK_BACKEND != ''
+        run: |
+          ok=1
+          for name in HOOK_BACKEND HOOK_FRONTEND; do
+            v="${!name}"
+            [ -z "$v" ] && continue
+            case "$v" in
+              https://api.render.com/deploy/srv-*\?key=*) echo "$name: looks like a Render deploy hook" ;;
+              *) echo "::error::$name is not a Render deploy hook URL (expected https://api.render.com/deploy/srv-...?key=...; got ${#v} characters). Paste the full URL from Render → service → Settings → Deploy Hook, without quotes."; ok=0 ;;
+            esac
+          done
+          [ "$ok" = 1 ]
       - name: Trigger the backend deploy hook
         if: env.HOOK_BACKEND != ''
         run: |
