@@ -12,6 +12,9 @@ RUN npm run build
 # ── Runtime: static files behind nginx ────────────────────────────────────────
 FROM nginx:1.31-alpine AS runtime
 # apk upgrade pulls OS security fixes published after the base image was built.
+# APK_REFRESH is passed by CI (the run id) so this layer is rebuilt on every run; otherwise the
+# build cache reuses the layer and OS fixes published after the base image never land.
+ARG APK_REFRESH=0
 RUN apk upgrade --no-cache
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html

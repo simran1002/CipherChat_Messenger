@@ -80,11 +80,13 @@ jobs:
             image: ghcr.io/${{ github.repository_owner }}/cipherchat-backend
             build-args: |
               APP_VERSION=${{ needs.version.outputs.version }}
+              APK_REFRESH=${{ github.run_id }}
           - name: frontend
             context: ./chat-front
             image: ghcr.io/${{ github.repository_owner }}/cipherchat-frontend
             build-args: |
               VITE_API_URL=${{ vars.PRODUCTION_API_URL || 'http://localhost:8080' }}
+              APK_REFRESH=${{ github.run_id }}
     outputs:
       backend-digest: ${{ steps.push.outputs.digest }}
     steps:

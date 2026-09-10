@@ -187,6 +187,8 @@ jobs:
           context: ${{ matrix.context }}
           load: true
           tags: ${{ matrix.image }}:${{ github.sha }}
+          build-args: |
+            APK_REFRESH=${{ github.run_id }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,scope=${{ matrix.name }},mode=max
       - name: Image vulnerability scan
@@ -212,6 +214,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APK_REFRESH=${{ github.run_id }}
           cache-from: type=gha,scope=${{ matrix.name }}
 
   # ── 6. Staging: every green main goes out automatically ──────────────────────

@@ -22,6 +22,9 @@ RUN --mount=type=cache,target=/root/.m2 \
 # snapshot-dependencies / application) so a redeploy pushes only the app layer.
 FROM eclipse-temurin:21-jre-alpine AS runtime
 # apk upgrade pulls OS security fixes published after the base image was built (OpenSSL et al.).
+# APK_REFRESH is passed by CI (the run id) so this layer is rebuilt on every run; otherwise the
+# build cache reuses the layer and OS fixes published after the base image never land.
+ARG APK_REFRESH=0
 RUN apk upgrade --no-cache \
  && addgroup -S cipherchat && adduser -S -G cipherchat cipherchat \
  && apk add --no-cache curl \
