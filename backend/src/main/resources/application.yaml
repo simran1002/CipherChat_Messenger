@@ -150,7 +150,7 @@ cipherchat:
     max-file-bytes: 10485760                    # 10 MB plaintext cap (room attachments)
     local:
       dir: ${UPLOAD_DIR:./data/uploads}
-      public-base-url: ${PUBLIC_BASE_URL:http://localhost:8080}
+      public-base-url: ${PUBLIC_BASE_URL:${RENDER_EXTERNAL_URL:http://localhost:8080}}   # Render sets RENDER_EXTERNAL_URL automatically
     s3:
       bucket: ${S3_BUCKET:}
       region: ${AWS_REGION:us-east-1}
@@ -214,3 +214,23 @@ management:
 cipherchat:
   security:
     cookie-secure: true
+
+---
+# Profile "nokafka": run without a Kafka broker (free-tier demo hosts have none). Messaging, E2EE,
+# presence and live fan-out (Redis) are unaffected; the Kafka consumers (durable notifications,
+# audit trail, analytics) and outbox externalization are switched off instead of failing forever.
+spring:
+  config:
+    activate:
+      on-profile: nokafka
+  kafka:
+    listener:
+      auto-startup: false
+  modulith:
+    events:
+      externalization:
+        enabled: false
+management:
+  health:
+    kafka:
+      enabled: false

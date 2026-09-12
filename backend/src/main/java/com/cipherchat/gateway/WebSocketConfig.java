@@ -1,6 +1,5 @@
 package com.cipherchat.gateway;
 
-import java.util.Arrays;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
@@ -36,7 +35,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     public WebSocketConfig(StompAuthInterceptor authInterceptor,
                            @Value("${cipherchat.cors.allowed-origins}") String allowedOrigins) {
         this.authInterceptor = authInterceptor;
-        this.allowedOrigins = Arrays.stream(allowedOrigins.split(",")).map(String::trim).toArray(String[]::new);
+        this.allowedOrigins = com.cipherchat.shared.web.Origins.parse(allowedOrigins).toArray(String[]::new);
     }
 
     @Override

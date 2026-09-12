@@ -2,7 +2,13 @@ import axios, { AxiosError, type InternalAxiosRequestConfig } from "axios";
 
 // Unset → same origin. In dev that means the Vite proxy (vite.config.ts);
 // production images bake an absolute URL at build time.
-const API_URL = import.meta.env.VITE_API_URL || "";
+// A bare hostname (what a Render blueprint can inject via fromService … host) becomes https://host.
+function normaliseBase(raw: string | undefined): string {
+  const v = (raw ?? "").trim().replace(/\/+$/, "");
+  if (!v) return "";
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(v) ? v : `https://${v}`;
+}
+const API_URL = normaliseBase(import.meta.env.VITE_API_URL);
 
 const api = axios.create({
   baseURL: API_URL,

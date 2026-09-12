@@ -51,7 +51,7 @@ public class SecurityConfig {
     public SecurityConfig(SecurityProperties props, Environment env,
                           @Value("${cipherchat.cors.allowed-origins}") String allowedOrigins) {
         this.props = props;
-        this.allowedOrigins = Arrays.stream(allowedOrigins.split(",")).map(String::trim).filter(s -> !s.isEmpty()).toList();
+        this.allowedOrigins = com.cipherchat.shared.web.Origins.parse(allowedOrigins);
         boolean prod = Arrays.asList(env.getActiveProfiles()).contains("prod");
         if (props.jwtSecret().getBytes(StandardCharsets.UTF_8).length < 32) {
             throw new IllegalStateException("JWT_SECRET must be at least 32 bytes");

@@ -5,17 +5,17 @@ services:
   - type: web
     name: cipherchat-backend
     runtime: docker
-    plan: starter
+    plan: free
     region: oregon
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
     healthCheckPath: /actuator/health/readiness
-    autoDeploy: false      # deploys are triggered by .github/workflows/deploy.yml after CI passes (deploy hook)
+    autoDeploy: true       # Render deploys every push to main; set false and use deploy hooks for CI-gated deploys
     envVars:
       - key: PORT
         value: "8080"
       - key: SPRING_PROFILES_ACTIVE
-        value: prod
+        value: prod,nokafka                     # free tier: no Kafka broker. Drop 'nokafka' and add KAFKA_BOOTSTRAP_SERVERS when one exists
       # Render exposes postgres://… connection strings; JDBC needs jdbc:postgresql://host:port/db,
       # so the parts are passed separately and application.yaml assembles the JDBC URL.
       - key: DATABASE_HOST
@@ -43,22 +43,21 @@ services:
           type: keyvalue
           name: cipherchat-redis
           property: connectionString
-      - key: KAFKA_BOOTSTRAP_SERVERS            # Render has no Kafka — external broker (Upstash/Confluent/Redpanda)
-        sync: false
       - key: JWT_SECRET
         generateValue: true
       - key: SEAL_SECRET
         generateValue: true
       - key: COOKIE_SECURE
         value: "true"
-      - key: CORS_ALLOWED_ORIGINS
-        sync: false                             # https://<frontend>.onrender.com
-      - key: PUBLIC_BASE_URL
-        sync: false                             # https://<backend>.onrender.com
+      - key: CORS_ALLOWED_ORIGINS                # the frontend's hostname; the app adds https://
+        fromService:
+          type: web
+          name: cipherchat-frontend
+          property: host
       - key: STORAGE_DRIVER
         value: local                            # demo only; set s3 + S3_* for anything durable
       - key: UPLOAD_DIR
-        value: /data/uploads
+        value: /tmp/uploads                     # free instances have no persistent disk: uploads survive until the next deploy
       - key: AI_BASE_URL
         sync: false                             # any chat-completions endpoint; blank disables AI
       - key: AI_MODEL
@@ -67,33 +66,31 @@ services:
         sync: false
       - key: LOG_FORMAT
         value: ecs
-    disk:
-      name: uploads
-      mountPath: /data/uploads
-      sizeGB: 1
-
   - type: web
     name: cipherchat-frontend
     runtime: docker
-    plan: starter
+    plan: free
     region: oregon
     dockerfilePath: ./chat-front/Dockerfile
     dockerContext: ./chat-front
     healthCheckPath: /healthz
-    autoDeploy: false      # deploys are triggered by .github/workflows/deploy.yml after CI passes (deploy hook)
+    autoDeploy: true       # Render deploys every push to main; set false and use deploy hooks for CI-gated deploys
     envVars:
-      - key: VITE_API_URL                       # baked at image build; set to the backend's public URL
-        sync: false
+      - key: VITE_API_URL                       # baked at image build: the backend's hostname, the client adds https://
+        fromService:
+          type: web
+          name: cipherchat-backend
+          property: host
 
   - type: keyvalue
     name: cipherchat-redis
-    plan: starter
+    plan: free
     region: oregon
     maxmemoryPolicy: allkeys-lru
     ipAllowList: []                             # internal only
 
 databases:
   - name: cipherchat-db
-    plan: basic-256mb
+    plan: free
     region: oregon
     postgresMajorVersion: "17"
