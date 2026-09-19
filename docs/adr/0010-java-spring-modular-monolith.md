@@ -38,6 +38,6 @@ A backend where the guarantees the product advertises (provable delivery, operat
 ## Consequences
 
 - Every "cannot happen" in the docs maps to a constraint, a transaction boundary or a test — `DATABASE_DESIGN.md`, `KAFKA_DESIGN.md`.
-- The interview story changes from "I added reliability features" to "the platform makes the guarantees, here is where each one lives."
+- The project narrative changes from "I added reliability features" to "the platform makes the guarantees, here is where each one lives."
 - Local development needs Docker for Postgres/Redis/Kafka (Compose provided); unit tests do not.
 - Frontend: one adapter file (`stompSocket.ts`) and a path/id sweep; the E2EE client code is untouched.

@@ -6,3 +6,5 @@ backend/data/
 chat-back/
 # Python bytecode from the load/verification scripts
 __pycache__/
+# Personal preparation notes stay local
+docs/INTERVIEW*.md

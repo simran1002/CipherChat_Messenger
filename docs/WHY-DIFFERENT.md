@@ -62,9 +62,10 @@ would justify it.
 
 The numbers below were measured on the Node/Socket.IO implementation this
 system replaced, on one Windows laptop with everything co-located. They are
-kept because they are real, and labelled because they are not yet re-run
-against the Java backend (the harness targets Socket.IO and needs a STOMP
-client; see `INTERVIEW-REVIEW.md`).
+kept because they are real, and labelled because they belong to that
+implementation. The Java backend's own measurements (latency at a fixed
+message rate, 5,000-socket connection density, broadcast cost per room
+size) are in [BENCHMARKS.md](BENCHMARKS.md).
 
 | Measurement | Result |
 |---|---|
@@ -80,7 +81,7 @@ event loop doing every socket write — with virtual-thread request handling
 and per-pod STOMP brokers fed by Redis. Re-measuring is the next step, and
 the claim until then is the design, not the number.
 
-## The engineering signals an interviewer can check
+## The engineering signals a reviewer can check
 
 1. The guarantees are constraints: `\d messages` and `\d dm_messages` show
    the unique indexes; `MessagingIT` double-sends and asserts one row;

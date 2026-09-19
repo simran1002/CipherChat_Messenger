@@ -78,4 +78,4 @@ Every technology in the repository, what it is used for, and where it lives. Ver
 
 ## Documentation
 
-`docs/ARCHITECTURE.md`, `SYSTEM_DESIGN.md`, `API.md`, `DATABASE_DESIGN.md`, `KAFKA_DESIGN.md`, `SECURITY.md`, `SCALABILITY.md`, `DEPLOYMENT.md`, `LOCAL_DEVELOPMENT.md`, ten ADRs under `docs/adr/`, `INTERVIEW.md` and `INTERVIEW-REVIEW.md`. The README's *Verification status* table states, per claim, whether it was executed, designed, or still needs infrastructure the repository does not own.
+`docs/ARCHITECTURE.md`, `SYSTEM_DESIGN.md`, `API.md`, `DATABASE_DESIGN.md`, `KAFKA_DESIGN.md`, `SECURITY.md`, `SCALABILITY.md`, `DEPLOYMENT.md`, `LOCAL_DEVELOPMENT.md`, `BENCHMARKS.md`, `DEMO.md`, and ten ADRs under `docs/adr/`. The README's *Verification status* table states, per claim, whether it was executed, designed, or still needs infrastructure the repository does not own.

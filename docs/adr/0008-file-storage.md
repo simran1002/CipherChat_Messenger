@@ -7,7 +7,7 @@ Uploads (avatars, attachments, voice notes) were written by multer straight
 to `uploads/` on the pod's disk and served by a static route. With two
 replicas, a file uploaded to pod A 404s when the next request lands on pod B;
 the compose stack papered over it with a shared volume. Old avatars were
-never deleted. The interview review listed this as the last substantive
+never deleted. An internal review listed this as the last substantive
 infrastructure gap.
 
 ## Requirement

@@ -1,6 +1,6 @@
 # System Design
 
-The interview-style walk-through: requirements → estimates → high-level design → the deep dives that carry the guarantees. Companion docs hold the detail: `ARCHITECTURE.md` (modules, request paths), `DATABASE_DESIGN.md`, `KAFKA_DESIGN.md`, `SCALABILITY.md`, `SECURITY.md`.
+The system-design walk-through: requirements → estimates → high-level design → the deep dives that carry the guarantees. Companion docs hold the detail: `ARCHITECTURE.md` (modules, request paths), `DATABASE_DESIGN.md`, `KAFKA_DESIGN.md`, `SCALABILITY.md`, `SECURITY.md`.
 
 ## 1. Requirements
 

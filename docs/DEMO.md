@@ -1,8 +1,8 @@
-# Interview Demo Script (10–15 minutes)
+# Demo walkthrough (10–15 minutes)
 
-Audience: senior/staff engineers. The goal is not a product tour — it's to
-surface the engineering under the UI fast, and let every step open a thread
-they can pull on. Rehearse the kill-a-pod step; it's the centerpiece.
+Audience: engineers evaluating the system. This is not a product tour: each
+step surfaces one guarantee and the mechanism behind it, and can be verified
+live. The kill-a-pod step is the centerpiece.
 
 **Setup before the call:**
 
@@ -127,13 +127,13 @@ once), `StompGatewayIT` (ACK + broadcast over a real socket), and
 vectors; server TOTP to RFC 6238. CI: Spotless → unit → ITs → JaCoCo → Trivy
 → images → gated deploy.
 
-### 13. Trade-offs I'd defend (1 min)
+### 13. Trade-offs (1 min)
 Pick three: modular monolith over microservices at this envelope; Redis
 pub/sub (lossy, resync by sequence) for live fan-out instead of Kafka;
 session-granular forward secrecy over a subtly-wrong Double Ratchet. Each has
 an ADR with the alternative it rejected (ADR-0010, 0007, 0003).
 
-### 14. Open threads for Q&A
-`SYSTEM_DESIGN.md` §10 (what changes at 10×), the weak-points list in
-`INTERVIEW-REVIEW.md` — offering your own known limitations before being
-asked is the strongest signal in the room.
+### 14. Open threads
+`SYSTEM_DESIGN.md` §10 (what changes at 10×), the measured limits in
+`BENCHMARKS.md`, and the README's *Verification status* table, which states
+per claim what was executed, measured, designed, or not verified.

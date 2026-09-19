@@ -96,7 +96,7 @@ Operating the DLT: it is a normal topic. Inspect with `kcat -t message-events-dl
 
 `docker compose up` starts a single-node KRaft broker (`apache/kafka:3.9.0`); host tools reach it on `localhost:29092`. Integration tests start their own via Testcontainers (`apache/kafka-native`). Nothing needs to be pre-created: topics come from `KafkaAdmin` at boot.
 
-## Interview talking points
+## Design summary
 
 - Outbox pattern vs. dual writes; why "publish after commit" alone is not enough (crash window) and how the publication table closes it.
 - Idempotent consumer with a ledger keyed by `(consumer, eventId)` — why the ledger write must share the side effect's transaction.
