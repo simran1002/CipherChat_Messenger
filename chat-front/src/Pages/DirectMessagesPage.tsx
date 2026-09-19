@@ -10,6 +10,7 @@ import {
   LockClosedIcon,
   PaperClipIcon,
   ShieldCheckIcon,
+  ShieldExclamationIcon,
   ArrowPathRoundedSquareIcon,
   TrashIcon,
 } from "@heroicons/react/24/outline";
@@ -19,6 +20,8 @@ import e2eeService from "../services/E2EEService";
 import { useE2EE, isNoKeysError } from "../hooks/useE2EE";
 import E2EESetupGate from "../components/E2EESetupGate";
 import SafetyNumberModal from "../components/SafetyNumberModal";
+import EncryptionStatusModal from "../components/EncryptionStatusModal";
+import GlobalSearchModal from "../components/GlobalSearchModal";
 import DmAttachment from "../components/DmAttachment";
 import { encryptFileForDm } from "../crypto/fileCrypto";
 import { uploadEncryptedBlob } from "../services/encryptedUpload";
@@ -125,6 +128,8 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
   const [currentUserId, setCurrentUserId] = useState("");
   const [keyChangedConvs, setKeyChangedConvs] = useState<Set<string>>(new Set());
   const [showSafetyModal, setShowSafetyModal] = useState(false);
+  const [showEncryptionStatus, setShowEncryptionStatus] = useState(false);
+  const [showGlobalSearch, setShowGlobalSearch] = useState(false);
   /** File name currently being encrypted & uploaded (composer pending strip). */
   const [pendingUpload, setPendingUpload] = useState<string | null>(null);
   // Local search over DECRYPTED messages. The server can't provide this —
@@ -582,6 +587,29 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
     };
   }, [activeConv, messages.length]);
 
+  /** Only turns it ON — the modal's button is "upgrade", never "toggle off" by surprise. */
+  const upgradeToRatchet = () => {
+    if (!ratchetOptIn) {
+      e2eeService.setDoubleRatchetEnabled(true);
+      setRatchetOptIn(true);
+    }
+    setShowEncryptionStatus(false);
+    makeToast("success", "Double Ratchet is on — your next message here starts a forward-secret session");
+  };
+
+  // Cmd/Ctrl+K opens the cross-conversation search — the on-device index already exists per
+  // conversation; this only broadens the query, no new indexing.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setShowGlobalSearch(true);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   const toggleRatchet = () => {
     const next = !ratchetOptIn;
     e2eeService.setDoubleRatchetEnabled(next);
@@ -674,15 +702,25 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
             <EnvelopeIcon className="w-5 h-5 text-primary-400" />
             <h2 className="font-semibold text-white">Messages</h2>
           </div>
-          <motion.button
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9 }}
-            onClick={() => { setShowNewDM(true); loadAllUsers(); }}
-            className="p-2 bg-primary-600 hover:bg-primary-700 rounded-lg text-white transition-colors"
-            aria-label="New direct message"
-          >
-            <PlusIcon className="w-4 h-4" />
-          </motion.button>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setShowGlobalSearch(true)}
+              className="p-2 hover:bg-gray-700 rounded-lg text-gray-400 hover:text-white transition-colors"
+              aria-label="Search all conversations"
+              title="Search all your conversations on this device (⌘K / Ctrl+K)"
+            >
+              <MagnifyingGlassIcon className="w-4 h-4" />
+            </button>
+            <motion.button
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.9 }}
+              onClick={() => { setShowNewDM(true); loadAllUsers(); }}
+              className="p-2 bg-primary-600 hover:bg-primary-700 rounded-lg text-white transition-colors"
+              aria-label="New direct message"
+            >
+              <PlusIcon className="w-4 h-4" />
+            </motion.button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto">
@@ -761,6 +799,16 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
                   title="View safety number"
                 >
                   <ShieldCheckIcon className="w-5 h-5 text-gray-400" />
+                </button>
+              )}
+              {e2eeReady && (
+                <button
+                  onClick={() => setShowEncryptionStatus(true)}
+                  className="p-2 hover:bg-gray-700 rounded-lg transition-colors"
+                  aria-label="Encryption status"
+                  title="What's actually protecting this conversation right now"
+                >
+                  <ShieldExclamationIcon className="w-5 h-5 text-gray-400" />
                 </button>
               )}
               {e2eeReady && (
@@ -1045,6 +1093,23 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
           peerId={activeConv.participant._id}
           peerName={activeConv.participant.name}
           onClose={() => setShowSafetyModal(false)}
+        />
+      )}
+
+      {showEncryptionStatus && activeConv?.participant && (
+        <EncryptionStatusModal
+          conversationId={activeConv._id}
+          peerName={activeConv.participant.name}
+          onClose={() => setShowEncryptionStatus(false)}
+          onUpgrade={convOnRatchet ? undefined : upgradeToRatchet}
+        />
+      )}
+
+      {showGlobalSearch && (
+        <GlobalSearchModal
+          conversations={conversations}
+          onClose={() => setShowGlobalSearch(false)}
+          onJump={(conv) => void openConversation(conv)}
         />
       )}
     </div>

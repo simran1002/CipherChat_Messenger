@@ -13,6 +13,8 @@ import {
   acceptSession,
   initiateSession,
   needsRotation,
+  ROTATE_AFTER_MESSAGES,
+  ROTATE_AFTER_MS,
   type PeerBundle,
 } from "../crypto/session";
 import { open, openOwn, seal, type WireEnvelope } from "../crypto/envelope";
@@ -41,6 +43,26 @@ export interface DecryptResult {
   text: string; // plaintext, or a placeholder when !ok
   keyChanged?: boolean; // TOFU pin mismatch detected during this decrypt
 }
+
+/**
+ * What THIS conversation's protection actually guarantees right now, in terms a non-cryptographer can
+ * act on — the honest version of "forward secrecy", not the marketing version. See ADR-0011.
+ */
+export type EncryptionStatus =
+  | { protocol: "none" }
+  | {
+      protocol: "v2"; // Double Ratchet: a message key is destroyed the instant it is used
+      messagesSent: number; // this device's count on the current session (vault.RatchetSession.sendTotal)
+      since: number; // epoch ms the current session started
+    }
+  | {
+      protocol: "v1"; // chain ratchet: the whole session's key can be re-derived from one stolen root
+      messagesSent: number; // this device's count on the current session (StoredSession.sendCtr)
+      since: number; // epoch ms the current session started
+      rotatesAt: number; // epoch ms the 7-day rotation fires (whichever bound hits first)
+      messagesUntilRotation: number; // 0 once the 200-message bound is reached
+      needsRotation: boolean; // a fresh session will be negotiated on the next send
+    };
 
 const UNDECRYPTABLE = "⚠ Unable to decrypt — sent with a previous encryption key";
 const UNDECRYPTABLE_V2 = "⚠ Not stored on this device — forward-secret messages cannot be re-opened from the server";
@@ -274,6 +296,28 @@ class E2EEService {
   /** Does this conversation currently run on the Double Ratchet on this device? */
   async usesDoubleRatchet(conversationId: string): Promise<boolean> {
     return (await vault.latestRatchet(conversationId)) !== null;
+  }
+
+  /**
+   * The plain-language state of this conversation's protection, for a customer-facing panel rather than
+   * a developer log. A v2 session always wins the read (it is the newer protocol; a device that opted in
+   * only ever STARTS v2 sessions, and answers a peer-started one on v2 too — see `decrypt`'s dispatch).
+   */
+  async encryptionStatus(conversationId: string): Promise<EncryptionStatus> {
+    const ratchet = await vault.latestRatchet(conversationId);
+    if (ratchet) {
+      return { protocol: "v2", messagesSent: ratchet.sendTotal, since: ratchet.createdAt };
+    }
+    const session = await this.activeSession(conversationId);
+    if (!session) return { protocol: "none" };
+    return {
+      protocol: "v1",
+      messagesSent: session.sendCtr,
+      since: session.createdAt,
+      rotatesAt: session.createdAt + ROTATE_AFTER_MS,
+      messagesUntilRotation: Math.max(0, ROTATE_AFTER_MESSAGES - session.sendCtr),
+      needsRotation: needsRotation(session),
+    };
   }
 
   /**

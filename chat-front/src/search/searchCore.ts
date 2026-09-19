@@ -24,6 +24,9 @@ export interface SearchHit {
   convId: string;
   score: number;
   ts: number;
+  /** Included so a cross-conversation result (global search) can show a snippet without a second lookup. */
+  text: string;
+  sender: string;
 }
 
 export interface SearchOptions {
@@ -100,7 +103,7 @@ export class SearchCore {
     return res.hits
       .map((h) => {
         const d = h.document as unknown as SearchDoc;
-        return { id: d.id, convId: d.convId, score: h.score, ts: d.ts };
+        return { id: d.id, convId: d.convId, score: h.score, ts: d.ts, text: d.text, sender: d.sender };
       })
       .sort((a, b) => b.score - a.score || b.ts - a.ts);
   }

@@ -42,6 +42,13 @@ describe("SearchCore", () => {
     expect(core.size).toBe(3);
   });
 
+  it("a hit carries the text and sender, so a cross-conversation search needs no second lookup", async () => {
+    const core = await SearchCore.create();
+    await core.addAll(docs);
+    const [hit] = await core.search("subpoena", { convId: "c-legal" });
+    expect(hit).toMatchObject({ id: "1", text: "The subpoena response is due Friday", sender: "Priya" });
+  });
+
   it("shredding a conversation removes every one of its documents", async () => {
     const core = await SearchCore.create();
     await core.addAll(docs);
