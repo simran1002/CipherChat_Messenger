@@ -36,6 +36,7 @@ import com.cipherchat.shared.security.AuthenticatedUser;
  *       open to any authenticated session; every other destination is refused.
  *       Without this check any signed-in user could read every room's frames
  *       and every DM's ciphertext and metadata.</li>
+ *   <li><b>SEND</b> — only {@code /app/**}. Broker destinations are server-to-client only.</li>
  *   <li>Every other frame must carry the principal set at CONNECT.</li>
  * </ul>
  */
@@ -46,6 +47,7 @@ public class StompAuthInterceptor implements ChannelInterceptor {
     static final String ROOM_TOPIC = "/topic/rooms/";
     static final String DM_TOPIC = "/topic/dm/";
     static final String PRESENCE_TOPIC = "/topic/presence";
+    static final String APP_PREFIX = "/app/";
 
     private final JwtService jwt;
     private final ChatroomService rooms;
@@ -66,6 +68,7 @@ public class StompAuthInterceptor implements ChannelInterceptor {
             case CONNECT -> authenticate(accessor);
             case DISCONNECT -> { }
             case SUBSCRIBE -> authoriseSubscription(accessor, requirePrincipal(accessor));
+            case SEND -> authoriseSend(accessor, requirePrincipal(accessor));
             default -> requirePrincipal(accessor);
         }
         return message;
@@ -87,6 +90,20 @@ public class StompAuthInterceptor implements ChannelInterceptor {
     private static StompPrincipal requirePrincipal(StompHeaderAccessor accessor) {
         if (accessor.getUser() instanceof StompPrincipal p) return p;
         throw new BadCredentialsException("Not authenticated");
+    }
+
+    /**
+     * Clients may only SEND to application handlers. The simple broker relays anything addressed to
+     * {@code /topic/**}, {@code /queue/**} or {@code /user/**} straight to subscribers, so without this
+     * check one signed-in user could publish a forged {@code newMessage} into any room, or an event into
+     * another user's private queue, without ever passing a controller.
+     */
+    private void authoriseSend(StompHeaderAccessor accessor, StompPrincipal principal) {
+        String destination = accessor.getDestination();
+        if (destination == null || !destination.startsWith(APP_PREFIX)) {
+            log.warn("SEND refused userId={} destination={}", principal.user().id(), destination);
+            throw new AccessDeniedException("Not allowed to send to " + destination);
+        }
     }
 
     private void authoriseSubscription(StompHeaderAccessor accessor, StompPrincipal principal) {

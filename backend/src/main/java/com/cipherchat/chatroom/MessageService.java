@@ -134,8 +134,9 @@ public class MessageService {
 
         UUID clientId = draft.getClientMessageId();
         if (clientId != null) {
-            Optional<Message> seen = dedup.lookup(clientId).flatMap(messages::findById)
-                    .or(() -> messages.findByClientMessageId(clientId));
+            Optional<Message> seen = dedup.lookup(roomId, clientId)
+                    .flatMap(id -> messages.findById(id).filter(m -> m.getChatroomId().equals(roomId)))
+                    .or(() -> messages.findByChatroomIdAndClientMessageId(roomId, clientId));
             if (seen.isPresent()) {
                 metrics.duplicate();
                 return result(seen.get(), true);
@@ -153,7 +154,7 @@ public class MessageService {
         } catch (DataIntegrityViolationException e) {
             // The DB backstop caught a race the Redis layer missed: same client id (or, if the
             // counter was ever wrong, same sequence slot). Resolve to the existing row.
-            Optional<Message> existing = clientId == null ? Optional.empty() : messages.findByClientMessageId(clientId);
+            Optional<Message> existing = clientId == null ? Optional.empty() : messages.findByChatroomIdAndClientMessageId(roomId, clientId);
             if (existing.isPresent()) {
                 metrics.duplicate();
                 metrics.stop(sample);
@@ -167,7 +168,7 @@ public class MessageService {
         }
         metrics.sent();
         metrics.stop(sample);
-        if (clientId != null) dedup.mark(clientId, saved.getId());
+        if (clientId != null) dedup.mark(roomId, clientId, saved.getId());
         rooms.ensureMembership(roomId, senderId);       // public rooms: first message = participation
         return result(saved, false);
     }

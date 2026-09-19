@@ -72,7 +72,8 @@ class S3FileStorage implements FileStorage {
 
     @Override
     public Stored put(String fileName, String contentType, byte[] bytes) {
-        String key = "uploads/" + UUID.randomUUID() + LocalFileStorage.extensionOf(fileName);
+        // See LocalFileStorage.put: the extension must come from the validated content type.
+        String key = "uploads/" + UUID.randomUUID() + "." + MimeExtensions.forContentType(contentType);
         s3.putObject(PutObjectRequest.builder().bucket(bucket).key(key).contentType(contentType)
                 .contentLength((long) bytes.length).build(), RequestBody.fromBytes(bytes));
         return new Stored(key, publicBaseUrl + "/" + key, fileName, contentType, bytes.length);

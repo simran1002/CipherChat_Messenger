@@ -47,7 +47,10 @@ class LocalFileStorage implements FileStorage {
 
     @Override
     public Stored put(String fileName, String contentType, byte[] bytes) {
-        String key = UUID.randomUUID() + extensionOf(fileName);
+        // The key's extension comes from the VALIDATED content type, never the client's filename — see
+        // MimeExtensions. Serving a key that ends in the wrong extension is how a declared image/png
+        // becomes an executed text/html on this origin.
+        String key = UUID.randomUUID() + "." + MimeExtensions.forContentType(contentType);
         Path target = dir.resolve(key).normalize();
         if (!target.startsWith(dir)) throw new IllegalArgumentException("Bad key");   // belt and braces
         try {
@@ -56,15 +59,6 @@ class LocalFileStorage implements FileStorage {
             throw new UncheckedIOException("Write failed for " + key, e);
         }
         return new Stored(key, publicBaseUrl + "/uploads/" + key, fileName, contentType, bytes.length);
-    }
-
-    /** Only a short [a-z0-9] extension survives; anything else (e.g. ".php.jpg" games) is dropped. */
-    static String extensionOf(String fileName) {
-        if (fileName == null) return "";
-        int dot = fileName.lastIndexOf('.');
-        if (dot < 0 || dot == fileName.length() - 1) return "";
-        String ext = fileName.substring(dot + 1).toLowerCase();
-        return ext.matches("[a-z0-9]{1,5}") ? "." + ext : "";
     }
 
     @Configuration

@@ -71,7 +71,8 @@ final class ChatroomRepositories {
         @Query("select coalesce(max(m.sequenceNumber), 0) from Message m where m.chatroomId = :room")
         long maxSequence(@Param("room") UUID chatroomId);
 
-        Optional<Message> findByClientMessageId(UUID clientMessageId);
+        /** Scoped to the room: a client id must never resolve to another room's message (see RedisDeduplicator). */
+        Optional<Message> findByChatroomIdAndClientMessageId(UUID chatroomId, UUID clientMessageId);
 
         long countByChatroomIdAndSequenceNumberGreaterThanAndSenderIdNot(UUID chatroomId, long watermark, UUID senderId);
 

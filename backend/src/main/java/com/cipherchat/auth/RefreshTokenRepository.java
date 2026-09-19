@@ -16,30 +16,31 @@ interface RefreshTokenRepository extends JpaRepository<RefreshToken, UUID> {
 
     /**
      * Atomic consume: exactly one of N concurrent presenters of the same token
-     * gets {@code 1} back. Everyone else sees the row already gone — the
-     * replay/theft signal — without any lock or version column.
+     * gets {@code 1} back, without any lock or version column. The row is kept
+     * (marked used) so a later replay can be recognised and traced to its family.
      */
-    @Modifying
-    @Query("delete from RefreshToken r where r.tokenHash = :hash and r.expiresAt > :now")
-    int consume(@Param("hash") String tokenHash, @Param("now") Instant now);
+    @Modifying(clearAutomatically = true)
+    @Query("update RefreshToken r set r.usedAt = :now where r.tokenHash = :hash and r.usedAt is null and r.expiresAt > :now")
+    int markUsed(@Param("hash") String tokenHash, @Param("now") Instant now);
+
+    Optional<RefreshToken> findByIdAndUserId(UUID id, UUID userId);
+
+    /** Live sessions only: a used row is history, not a session. */
+    List<RefreshToken> findAllByUserIdAndUsedAtIsNullAndExpiresAtAfterOrderByCreatedAtDesc(UUID userId, Instant now);
 
     @Modifying
-    int deleteByTokenHash(String tokenHash);
-
-    List<RefreshToken> findAllByUserIdAndExpiresAtAfterOrderByCreatedAtDesc(UUID userId, Instant now);
+    @Query("delete from RefreshToken r where r.familyId = :familyId")
+    int deleteByFamilyId(@Param("familyId") UUID familyId);
 
     @Modifying
-    @Query("delete from RefreshToken r where r.userId = :userId and r.tokenHash <> :keepHash")
-    int deleteAllByUserIdExcept(@Param("userId") UUID userId, @Param("keepHash") String keepHash);
+    @Query("delete from RefreshToken r where r.userId = :userId and r.familyId <> :keepFamily")
+    int deleteAllByUserIdExceptFamily(@Param("userId") UUID userId, @Param("keepFamily") UUID keepFamily);
 
     @Modifying
     int deleteByUserId(UUID userId);
 
+    /** Used rows are only needed while a replay of them is plausible; a week bounds the table. */
     @Modifying
-    @Query("delete from RefreshToken r where r.id = :id and r.userId = :userId")
-    int deleteByIdAndUserId(@Param("id") UUID id, @Param("userId") UUID userId);
-
-    @Modifying
-    @Query("delete from RefreshToken r where r.expiresAt < :now")
-    int deleteExpired(@Param("now") Instant now);
+    @Query("delete from RefreshToken r where r.expiresAt < :now or r.usedAt < :usedBefore")
+    int deleteExpired(@Param("now") Instant now, @Param("usedBefore") Instant usedBefore);
 }

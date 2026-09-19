@@ -36,7 +36,7 @@ public class AnalyticsController {
         Instant weekAgo = Instant.now().minus(7, ChronoUnit.DAYS);
         return new Overview(
                 count("select count(*) from users"),
-                count("select count(*) from users where online"),
+                count("select count(*) from users where is_online"),
                 count("select count(*) from chatrooms"),
                 count("select count(*) from messages"),
                 count("select count(*) from dm_messages"),

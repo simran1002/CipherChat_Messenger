@@ -37,14 +37,23 @@ public class RefreshToken {
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
+    /** Every token minted from one sign-in shares a family; reuse of any member revokes all of them. */
+    @Column(name = "family_id", nullable = false, updatable = false)
+    private UUID familyId;
+
+    /** Set when the token is rotated. A used token that shows up again is the theft signal. */
+    @Column(name = "used_at")
+    private Instant usedAt;
+
     protected RefreshToken() {
     }
 
-    RefreshToken(UUID userId, String tokenHash, Instant expiresAt, String createdByIp) {
+    RefreshToken(UUID userId, String tokenHash, Instant expiresAt, String createdByIp, UUID familyId) {
         this.userId = userId;
         this.tokenHash = tokenHash;
         this.expiresAt = expiresAt;
         this.createdByIp = createdByIp == null ? "" : createdByIp;
+        this.familyId = familyId;
     }
 
     public UUID getId() { return id; }
@@ -53,4 +62,6 @@ public class RefreshToken {
     public Instant getExpiresAt() { return expiresAt; }
     public String getCreatedByIp() { return createdByIp; }
     public Instant getCreatedAt() { return createdAt; }
+    public UUID getFamilyId() { return familyId; }
+    public Instant getUsedAt() { return usedAt; }
 }

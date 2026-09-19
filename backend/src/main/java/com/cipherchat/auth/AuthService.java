@@ -47,10 +47,12 @@ public class AuthService {
     private final TwoFactorService twoFactor;
     private final AuditPublisher audit;
     private final TransactionTemplate tx;
+    private final AuthThrottle throttle;
 
     public AuthService(UserService users, JwtService jwt, RefreshTokenService refreshTokens,
                        RefreshCookie cookie, TwoFactorService twoFactor, AuditPublisher audit,
-                       PlatformTransactionManager txManager) {
+                       PlatformTransactionManager txManager, AuthThrottle throttle) {
+        this.throttle = throttle;
         this.users = users;
         this.jwt = jwt;
         this.refreshTokens = refreshTokens;
@@ -98,6 +100,8 @@ public class AuthService {
     public LoginResponse completeTwoFactorLogin(String pendingToken, String code, HttpServletRequest req, HttpServletResponse res) {
         UUID userId = jwt.parseTwoFactorPendingToken(pendingToken)
                 .orElseThrow(() -> ApiException.unauthorized("2fa_pending_invalid", "Sign-in expired — enter your password again."));
+        // Budgeted per ACCOUNT: a 6-digit code must not be guessable by spreading attempts over many addresses.
+        throttle.twoFactor(userId);
         TwoFactorService.VerifyResult result = twoFactor.verifyLogin(userId, code);
         if (!result.ok()) {
             audit.publishDetached(Audited.of(userId, "user.login_failed", "user", userId.toString(),
@@ -117,15 +121,18 @@ public class AuthService {
     /** Rotate the refresh cookie; mint a new access token. 401 when the cookie is missing/expired/replayed. */
     public String refresh(HttpServletRequest req, HttpServletResponse res) {
         String raw = cookie.read(req).orElseThrow(() -> ApiException.unauthorized("refresh_invalid", "Refresh token invalid or expired."));
-        UUID userId = refreshTokens.ownerOf(raw).orElse(null);
-        var issued = refreshTokens.rotate(raw, req.getRemoteAddr()).orElseThrow(() -> {
-            cookie.clear(res);
-            // A presented-but-unknown refresh token is the signature of token theft + replay.
-            audit.publishDetached(Audited.of(userId, "user.refresh_rejected", "user",
-                    userId == null ? null : userId.toString(), Map.of(), req.getRemoteAddr()));
-            return ApiException.unauthorized("refresh_invalid", "Refresh token invalid or expired.");
-        });
-        cookie.set(res, issued.rawToken());
+        RefreshTokenService.Rotation rotation = refreshTokens.rotate(raw, req.getRemoteAddr());
+        UUID userId = rotation.userId();
+        if (!rotation.ok()) {
+            // A sibling tab that lost the race keeps its cookie: the winner's Set-Cookie already replaced it.
+            if (rotation.outcome() != RefreshTokenService.Outcome.CONCURRENT) cookie.clear(res);
+            boolean reuse = rotation.outcome() == RefreshTokenService.Outcome.REUSED;
+            audit.publishDetached(Audited.of(userId, reuse ? "user.refresh_reuse_detected" : "user.refresh_rejected", "user",
+                    userId == null ? null : userId.toString(),
+                    Map.of("outcome", rotation.outcome().name(), "sessionsRevoked", rotation.revokedSessions()), req.getRemoteAddr()));
+            throw ApiException.unauthorized("refresh_invalid", "Refresh token invalid or expired.");
+        }
+        cookie.set(res, rotation.issued().rawToken());
         UserView user = users.require(userId);
         return jwt.issueAccessToken(principal(user));
     }

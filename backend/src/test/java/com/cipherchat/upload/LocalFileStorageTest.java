@@ -11,15 +11,28 @@ import org.junit.jupiter.api.io.TempDir;
 class LocalFileStorageTest {
 
     @Test
-    void extensionIsSanitised() {
-        assertThat(LocalFileStorage.extensionOf("photo.JPG")).isEqualTo(".jpg");
-        assertThat(LocalFileStorage.extensionOf("archive.tar.gz")).isEqualTo(".gz");
-        assertThat(LocalFileStorage.extensionOf("noext")).isEmpty();
-        assertThat(LocalFileStorage.extensionOf("trailingdot.")).isEmpty();
-        assertThat(LocalFileStorage.extensionOf("evil.php%00.jpg")).isEqualTo(".jpg");
-        assertThat(LocalFileStorage.extensionOf("x.toolongext")).isEmpty();
-        assertThat(LocalFileStorage.extensionOf("x.a/b")).isEmpty();
-        assertThat(LocalFileStorage.extensionOf(null)).isEmpty();
+    void keyExtensionComesFromTheValidatedContentType_neverTheClientFilename(@TempDir Path dir) throws Exception {
+        var props = new StorageProperties("local", 10, new StorageProperties.Local(dir.toString(), "http://h/"), null);
+        var storage = new LocalFileStorage(props);
+
+        // A client naming its file ".html" while the (already allow-list-checked) content type is
+        // image/png must still be stored — and therefore served — as a .png, never a .html: the on-disk
+        // extension governs what the servlet container serves it back as, independent of any header the
+        // upload arrived with.
+        var stored = storage.put("totally-a-photo.html", "image/png", "not really html".getBytes());
+
+        assertThat(stored.key()).endsWith(".png");
+        assertThat(stored.fileName()).isEqualTo("totally-a-photo.html");   // kept only as display metadata
+    }
+
+    @Test
+    void unrecognisedContentTypeFallsBackToBin(@TempDir Path dir) throws Exception {
+        var props = new StorageProperties("local", 10, new StorageProperties.Local(dir.toString(), "http://h/"), null);
+        var storage = new LocalFileStorage(props);
+
+        var stored = storage.put("encrypted.bin", "application/octet-stream", "opaque".getBytes());
+
+        assertThat(stored.key()).endsWith(".bin");
     }
 
     @Test

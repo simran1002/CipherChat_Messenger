@@ -42,34 +42,40 @@ public class AuthController {
 
     private final AuthService auth;
     private final TwoFactorService twoFactor;
+    private final AuthThrottle throttle;
 
-    public AuthController(AuthService auth, TwoFactorService twoFactor) {
+    public AuthController(AuthService auth, TwoFactorService twoFactor, AuthThrottle throttle) {
         this.auth = auth;
         this.twoFactor = twoFactor;
+        this.throttle = throttle;
     }
 
     @PostMapping("/register")
     @ResponseStatus(HttpStatus.CREATED)
     @Operation(summary = "Create an account; returns an access token and sets the refresh cookie")
     public LoginResponse register(@Valid @RequestBody RegisterRequest body, HttpServletRequest req, HttpServletResponse res) {
+        throttle.credentials(req.getRemoteAddr());
         return auth.register(body.name(), body.email(), body.password(), req, res);
     }
 
     @PostMapping("/login")
     @Operation(summary = "Password login — returns a session, or a 2FA challenge with a pending token")
     public LoginResponse login(@Valid @RequestBody LoginRequest body, HttpServletRequest req, HttpServletResponse res) {
+        throttle.login(req.getRemoteAddr(), body.email());
         return auth.login(body.email(), body.password(), req, res);
     }
 
     @PostMapping("/login/2fa")
     @Operation(summary = "Second step of login: pending token + TOTP or backup code")
     public LoginResponse loginTwoFactor(@Valid @RequestBody TwoFactorLoginRequest body, HttpServletRequest req, HttpServletResponse res) {
+        throttle.credentials(req.getRemoteAddr());
         return auth.completeTwoFactorLogin(body.pendingToken(), body.code(), req, res);
     }
 
     @PostMapping("/refresh")
     @Operation(summary = "Rotate the refresh cookie and mint a new 15-minute access token")
     public TokenResponse refresh(HttpServletRequest req, HttpServletResponse res) {
+        throttle.refresh(req.getRemoteAddr());
         return new TokenResponse(auth.refresh(req, res));
     }
 
