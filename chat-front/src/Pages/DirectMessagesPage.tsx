@@ -33,6 +33,7 @@ import type {
 // Type-only import: DmEnvelope (wire type, v: number) narrows to WireEnvelope (v: 1)
 // for e2eeService.decrypt — same runtime shape, see the casts below.
 import type { WireEnvelope } from "../crypto/envelope";
+import { indexMessages, searchMessages } from "../search/searchClient";
 
 interface AvatarUser {
   name?: string;
@@ -128,6 +129,8 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
   // it only ever holds ciphertext — so search runs entirely on this device.
   const [showDmSearch, setShowDmSearch] = useState(false);
   const [dmSearch, setDmSearch] = useState("");
+  // Ranked, typo-tolerant hits from the on-device index (search worker); null = not searched yet.
+  const [indexHits, setIndexHits] = useState<Set<string> | null>(null);
 
   const { status: e2eeStatus, refresh: refreshE2EE } = useE2EE();
 
@@ -560,6 +563,43 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
   const e2eeReady = e2eeStatus.state === "ready";
   const allE2EE = messages.length > 0 && messages.every((m) => m.encrypted);
 
+  // Feed the on-device index with whatever this tab has decrypted. Idempotent: the worker dedupes on
+  // message id + text, so re-running on every render of the list costs nothing once indexed.
+  useEffect(() => {
+    if (!activeConv) return;
+    const docs = messages
+      .filter((m) => !m._pending && !m.undecryptable && m._id)
+      .map((m) => {
+        const content = parseDmContent(m.message);
+        return {
+          id: m._id,
+          convId: activeConv._id,
+          sender: m.name ?? "",
+          text: content.t === "file" ? content.file.name : content.text,
+          ts: Date.parse(m.createdAt) || 0,
+        };
+      });
+    void indexMessages(docs);
+  }, [messages, activeConv]);
+
+  useEffect(() => {
+    const q = dmSearch.trim();
+    if (!showDmSearch || q.length < 2 || !activeConv) {
+      setIndexHits(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void searchMessages(q, { convId: activeConv._id, limit: 200 }).then((hits) => {
+        if (!cancelled) setIndexHits(new Set(hits.map((h) => h.id)));
+      });
+    }, 120);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [dmSearch, showDmSearch, activeConv]);
+
   // Searchable text of a message as THIS device sees it (decrypted): body
   // text, or the real file name that travelled inside the envelope.
   const searchableText = (msg: DmMessage): string => {
@@ -568,8 +608,11 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
   };
   const dmQuery = dmSearch.trim().toLowerCase();
   const isSearching = showDmSearch && dmQuery.length > 0;
+  // Substring match is instant and always available; the worker's hits add stemming and typo
+  // tolerance ("subpena" finds "subpoena") once they arrive. The server is never asked: it only
+  // holds ciphertext.
   const visibleMessages = isSearching
-    ? messages.filter((m) => searchableText(m).toLowerCase().includes(dmQuery))
+    ? messages.filter((m) => searchableText(m).toLowerCase().includes(dmQuery) || indexHits?.has(m._id))
     : messages;
   const keyChangedActive = !!activeConv && keyChangedConvs.has(activeConv._id);
 

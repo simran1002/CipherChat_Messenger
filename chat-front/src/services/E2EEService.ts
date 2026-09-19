@@ -25,6 +25,7 @@ import {
   uploadBackup,
 } from "../crypto/identity";
 import type { StoredIdentity, StoredSession } from "../crypto/keyStore";
+import { wipeSearchIndex } from "../search/searchClient";
 
 export type E2EEStatus =
   | { state: "ready"; identity: StoredIdentity }
@@ -104,6 +105,8 @@ class E2EEService {
   /** Nuclear option: new identity; peers will see a safety-number change. */
   async reset(): Promise<string> {
     await keyStore.wipeKeyStore();
+    // The on-device search index holds decrypted text: a key reset must take it (and its key) with it.
+    await wipeSearchIndex();
     this.refresh();
     return this.setUp();
   }
