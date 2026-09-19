@@ -2,6 +2,7 @@ package com.cipherchat.chatroom;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import jakarta.validation.constraints.Max;
@@ -12,6 +13,7 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 import com.cipherchat.user.UserView;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 /** API shapes for rooms and room messages. Ids are strings on the wire (UUIDs and bigints alike). */
 public final class ChatroomDtos {
@@ -30,6 +32,39 @@ public final class ChatroomDtos {
     /** {@code messageId} is serialised as a string like every other id on the wire (accepts either on input). */
     public record ReplyRef(@NotNull @com.fasterxml.jackson.annotation.JsonFormat(shape = com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING) Long messageId,
                            @Size(max = 200) String preview, @Size(max = 50) String senderName) {
+    }
+
+    // ── delta sync ───────────────────────────────────────────────────────────
+    // Short property names on purpose: these rows are what a reconnecting client downloads in bulk,
+    // and the names are repeated per row in JSON and CBOR alike.
+
+    /** {@code rooms}: roomId → last sequence the client holds (0 = nothing). */
+    public record SyncRequest(Map<UUID, Long> rooms, Integer maxPerRoom) {
+    }
+
+    public record DeltaMessage(
+            @JsonProperty("s") long seq,
+            @JsonProperty("i") long id,
+            @JsonProperty("u") String userId,
+            @JsonProperty("n") String name,
+            @JsonProperty("t") long tsMillis,
+            @JsonProperty("k") String type,
+            @JsonProperty("b") String body,
+            @JsonProperty("r") Long replyToId,
+            @JsonProperty("e") boolean edited,
+            @JsonProperty("c") String clientMessageId) {
+    }
+
+    /** {@code w}: the room's current max sequence; {@code m}: more remain after this page; {@code d}: access denied. */
+    public record RoomDelta(
+            @JsonProperty("room") String roomId,
+            @JsonProperty("msgs") List<DeltaMessage> messages,
+            @JsonProperty("w") long watermark,
+            @JsonProperty("m") boolean more,
+            @JsonProperty("d") boolean denied) {
+    }
+
+    public record SyncResponse(List<RoomDelta> rooms) {
     }
 
     public record SendMessageRequest(

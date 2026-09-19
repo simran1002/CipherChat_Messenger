@@ -102,7 +102,11 @@ export async function enqueue<K extends QueueKind>(item: Omit<QueuedItem<K>, "id
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, "readwrite");
     const req = tx.objectStore(STORE).add({ ...item, queuedAt: Date.now() });
-    req.onsuccess = () => resolve(req.result as number);
+    req.onsuccess = () => {
+      // If every tab closes before the network returns, the service worker flushes this row.
+      void import("./backgroundSync").then((m) => m.requestOutboxFlush()).catch(() => {});
+      resolve(req.result as number);
+    };
     req.onerror = () => reject(req.error);
   });
 }

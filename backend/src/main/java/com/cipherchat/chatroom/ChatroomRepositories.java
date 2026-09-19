@@ -65,6 +65,9 @@ final class ChatroomRepositories {
 
         List<Message> findByChatroomIdOrderBySequenceNumberDesc(UUID chatroomId, Limit limit);
 
+        /** Delta sync: the next N messages after {@code afterSeq}, oldest first — a forward seek on the same index. */
+        List<Message> findByChatroomIdAndSequenceNumberGreaterThanOrderBySequenceNumberAsc(UUID chatroomId, long afterSeq, Limit limit);
+
         @Query("select coalesce(max(m.sequenceNumber), 0) from Message m where m.chatroomId = :room")
         long maxSequence(@Param("room") UUID chatroomId);
 

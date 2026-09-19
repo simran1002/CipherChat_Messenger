@@ -200,6 +200,38 @@ public class MessageService {
                 new CursorPage.Cursor(next, hasMore, size));
     }
 
+    /**
+     * Delta sync: for each room, the messages after the caller's cursor (oldest first, capped), the room's
+     * watermark, and whether more remain. A room the caller cannot read yields {@code denied} instead of
+     * failing the whole batch — one revoked membership must not block catching up on every other room.
+     */
+    @Transactional(readOnly = true)
+    public List<ChatroomDtos.RoomDelta> deltas(UUID userId, Map<UUID, Long> cursors, int maxPerRoom) {
+        List<ChatroomDtos.RoomDelta> out = new ArrayList<>(cursors.size());
+        for (Map.Entry<UUID, Long> cursor : cursors.entrySet()) {
+            UUID roomId = cursor.getKey();
+            if (!rooms.canAccess(roomId, userId)) {
+                out.add(new ChatroomDtos.RoomDelta(roomId.toString(), List.of(), 0, false, true));
+                continue;
+            }
+            List<Message> rows = messages.findByChatroomIdAndSequenceNumberGreaterThanOrderBySequenceNumberAsc(
+                    roomId, cursor.getValue(), Limit.of(maxPerRoom + 1));
+            boolean more = rows.size() > maxPerRoom;
+            List<Message> page = more ? rows.subList(0, maxPerRoom) : rows;
+            Map<UUID, UserView.Summary> people = users.summaries(page.stream().map(Message::getSenderId).collect(Collectors.toSet()));
+            List<ChatroomDtos.DeltaMessage> deltas = page.stream().map(m -> {
+                UserView.Summary sender = people.get(m.getSenderId());
+                return new ChatroomDtos.DeltaMessage(m.getSequenceNumber(), m.getId(), m.getSenderId().toString(),
+                        sender == null ? "" : sender.name(), m.getCreatedAt().toEpochMilli(), m.getType().name(), m.getBody(),
+                        m.getReplyToId(), m.isEdited(),
+                        m.getClientMessageId() == null ? null : m.getClientMessageId().toString());
+            }).toList();
+            long watermark = more ? messages.maxSequence(roomId) : (page.isEmpty() ? cursor.getValue() : page.getLast().getSequenceNumber());
+            out.add(new ChatroomDtos.RoomDelta(roomId.toString(), deltas, watermark, more, false));
+        }
+        return out;
+    }
+
     @Transactional(readOnly = true)
     public List<MessageView> pinned(UUID roomId, UUID userId) {
         rooms.assertAccess(roomId, userId);

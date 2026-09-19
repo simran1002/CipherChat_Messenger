@@ -98,6 +98,14 @@ public class ChatroomService {
         return room;
     }
 
+    /** Non-throwing form of {@link #assertAccess}: for batch callers that report a denied room instead of failing. */
+    @Transactional(readOnly = true)
+    public boolean canAccess(UUID roomId, UUID userId) {
+        return rooms.findById(roomId)
+                .map(room -> !room.isPrivateRoom() || members.findByKeyChatroomIdAndKeyUserId(roomId, userId).isPresent())
+                .orElse(false);
+    }
+
     @Transactional(readOnly = true)
     public Optional<Role> roleOf(UUID roomId, UUID userId) {
         return members.findByKeyChatroomIdAndKeyUserId(roomId, userId).map(ChatroomMember::getRole);

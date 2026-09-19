@@ -8,3 +8,6 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <App />
   </React.StrictMode>
 );
+
+// Queue-flushing service worker (no fetch handler, no caching): see public/sw.js
+void import("./services/backgroundSync").then((m) => m.registerBackgroundSync());

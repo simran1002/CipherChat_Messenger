@@ -25,6 +25,7 @@ import MessageSearchBar from "../components/MessageSearchBar";
 import ScrollToBottomFAB from "../components/ScrollToBottomFAB";
 import AICoPilot from "../components/AICoPilot";
 import RoomMembersPanel from "../components/RoomMembersPanel";
+import { catchUpRoom } from "../services/deltaSync";
 import type {
   AuthUser,
   ChatMessage,
@@ -168,6 +169,7 @@ const ChatroomPage = ({ user }: ChatroomPageProps) => {
     const handleConnect = async () => {
       setIsConnected(true);
       await drainOfflineQueue(socket);
+      await catchUpAfterReconnect();
     };
     const handleDisconnect = () => setIsConnected(false);
 
@@ -183,6 +185,35 @@ const ChatroomPage = ({ user }: ChatroomPageProps) => {
       socket.off("disconnect", handleDisconnect);
     };
   }, [socket]);
+
+  /**
+   * Reconnect catch-up: ask only for what came after the highest sequence this tab holds (one CBOR
+   * round trip) instead of re-downloading the page. Live frames that raced the sync are de-duplicated
+   * by message id, and ordering is by sequence, never by arrival.
+   */
+  const catchUpAfterReconnect = async () => {
+    if (!chatroomId || latestSeqRef.current <= 0) return; // nothing loaded yet: the initial load covers it
+    try {
+      const delta = await catchUpRoom(chatroomId, latestSeqRef.current);
+      if (delta.denied || delta.messages.length === 0) return;
+      setMessages((prev) => {
+        const known = new Set(prev.map((m) => m._id));
+        const fresh = delta.messages
+          .filter((m) => !known.has(m.id))
+          .map((m) =>
+            mapRawMessage({
+              id: m.id, type: m.type, message: m.message, name: m.name, userId: m.userId, dp: "",
+              createdAt: m.createdAt, edited: m.edited, sequenceNumber: m.sequenceNumber,
+            } as RawChatroomMessage)
+          );
+        if (fresh.length === 0) return prev;
+        return [...prev, ...fresh].sort((a, b) => (a.sequenceNumber || 0) - (b.sequenceNumber || 0));
+      });
+      latestSeqRef.current = Math.max(latestSeqRef.current, delta.watermark);
+    } catch {
+      // best effort: the next reconnect or a manual reload still converges by sequence
+    }
+  };
 
   const scrollToBottom = useCallback((smooth = true) => {
     listRef.current?.scrollToBottom(smooth);
