@@ -49,7 +49,7 @@ public class SecretBox {
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
             cipher.init(Cipher.ENCRYPT_MODE, key, new GCMParameterSpec(TAG_BITS, iv));
             byte[] ct = cipher.doFinal(plaintext.getBytes(StandardCharsets.UTF_8));
-            byte[] out = new byte[iv.length + ct.length];
+            byte[] out = new byte[Math.addExact(iv.length, ct.length)];
             System.arraycopy(iv, 0, out, 0, iv.length);
             System.arraycopy(ct, 0, out, iv.length, ct.length);
             return Base64.getEncoder().encodeToString(out);

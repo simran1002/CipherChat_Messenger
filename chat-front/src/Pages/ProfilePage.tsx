@@ -130,6 +130,17 @@ function ActiveSessions() {
   );
 }
 
+function safeAvatarUrl(dp: string | null | undefined): string | null {
+  if (!dp) return null;
+  if (dp.startsWith("/") && !dp.startsWith("//")) return `${getApiUrl()}${dp}`;
+  try {
+    const u = new URL(dp);
+    return u.protocol === "https:" || u.protocol === "http:" ? u.href : null;
+  } catch {
+    return null;
+  }
+}
+
 const ProfilePage = ({ setUser }: ProfilePageProps) => {
   const [profile, setProfile] = useState<AuthUser | null>(null);
   const [editing, setEditing] = useState(false);
@@ -198,7 +209,9 @@ const ProfilePage = ({ setUser }: ProfilePageProps) => {
     </div>
   );
 
-  const dpSrc = preview || (profile.dp ? (profile.dp.startsWith("http") ? profile.dp : `${getApiUrl()}${profile.dp}`) : null);
+  // Server-supplied avatar locations are rendered only when they are http(s) URLs or
+  // server-relative paths; anything else (javascript:, data:, protocol-relative) is dropped.
+  const dpSrc = preview || safeAvatarUrl(profile.dp);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-950/30 to-gray-900 flex flex-col items-center justify-center p-4">
