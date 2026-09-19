@@ -3,13 +3,17 @@ package com.cipherchat.ai;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+import jakarta.servlet.http.HttpServletRequest;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -20,10 +24,13 @@ import com.cipherchat.chatroom.ChatroomDtos.MessageView;
 import com.cipherchat.chatroom.Message;
 import com.cipherchat.chatroom.MessageService;
 import com.cipherchat.shared.api.ApiException;
+import com.cipherchat.shared.events.AuditEvents.Audited;
+import com.cipherchat.shared.events.AuditPublisher;
 import com.cipherchat.shared.infra.RedisRateLimiter;
 import com.cipherchat.shared.security.CurrentUser;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
@@ -53,6 +60,18 @@ public class AiController {
     public record ToneRequest(String message) {
     }
 
+    /** One transcript line after client-side redaction: speaker and text carry placeholder tokens only. */
+    public record RedactedLine(String who, String text) {
+    }
+
+    /**
+     * Client-redacted summarisation request. {@code scope} is {@code room} or {@code dm}; for DMs this is
+     * the only possible route, because the server never holds DM plaintext.
+     */
+    public record RedactedSummarizeRequest(String scope, UUID scopeId, String policyVersion,
+                                           List<RedactedLine> transcript, Map<String, Integer> entityCounts) {
+    }
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record ToneResult(String tone, String suggestion) {
     }
@@ -62,9 +81,13 @@ public class AiController {
     private final RedisRateLimiter rateLimiter;
     private final ObjectMapper json;
     private final int perMinute;
+    private final AuditPublisher audit;
+    private final MeterRegistry meters;
 
     public AiController(LlmClient ai, MessageService messages, RedisRateLimiter rateLimiter, ObjectMapper json,
-                        LlmClient.Properties props) {
+                        LlmClient.Properties props, AuditPublisher audit, MeterRegistry meters) {
+        this.audit = audit;
+        this.meters = meters;
         this.ai = ai;
         this.messages = messages;
         this.rateLimiter = rateLimiter;
@@ -82,6 +105,67 @@ public class AiController {
         String summary = ai.complete("Summarize this chat conversation in 3-5 bullet points. Be concise and focus on decisions, "
                 + "key topics, and action items. Reply ONLY with the bullet points, no intro:\n\n" + transcript, 300);
         log.info("AI summary generated roomId={} userId={}", roomId, userId);
+        return Map.of("summary", summary.isBlank() ? "Could not generate summary." : summary);
+    }
+
+    private static final int MAX_LINES = 200;
+    private static final int MAX_LINE_CHARS = 4_000;
+    private static final int MAX_TOTAL_CHARS = 60_000;
+
+    /**
+     * Privacy-preserving summary: the CLIENT redacts (names, emails, phones, ids → tokens) and keeps the
+     * token map; this endpoint re-scans what arrived and fails closed if anything identifiable survived,
+     * so a client bug cannot leak PII to the model. The audit trail records counts and the policy
+     * version — never text.
+     */
+    @PostMapping("/summarize-redacted")
+    @Operation(summary = "Summarise a client-redacted transcript (rooms or E2EE DMs); 422 if PII survived redaction")
+    public Map<String, String> summarizeRedacted(@RequestBody RedactedSummarizeRequest body, HttpServletRequest req) {
+        UUID userId = throttle();
+        if (body == null || body.transcript() == null || body.transcript().isEmpty()) {
+            throw ApiException.badRequest("invalid_transcript", "Transcript is required.");
+        }
+        boolean room = "room".equals(body.scope());
+        if (!room && !"dm".equals(body.scope())) throw ApiException.badRequest("invalid_scope", "Scope must be room or dm.");
+        if (body.transcript().size() > MAX_LINES) throw ApiException.badRequest("transcript_too_long", "At most " + MAX_LINES + " lines.");
+        // Rooms: the caller must be able to read the room it claims to summarise. DMs: nothing server-side is read.
+        if (room) {
+            if (body.scopeId() == null) throw ApiException.badRequest("invalid_scope", "scopeId is required for rooms.");
+            messages.history(body.scopeId(), userId, null, 1);
+        }
+
+        StringBuilder transcript = new StringBuilder();
+        for (RedactedLine line : body.transcript()) {
+            if (line == null || line.text() == null || line.text().isBlank()) continue;
+            if (line.text().length() > MAX_LINE_CHARS) throw ApiException.badRequest("line_too_long", "A transcript line is too long.");
+            transcript.append(line.who() == null ? "?" : line.who()).append(": ").append(line.text()).append('\n');
+            if (transcript.length() > MAX_TOTAL_CHARS) throw ApiException.badRequest("transcript_too_long", "Transcript is too large.");
+        }
+
+        Set<String> survivors = PiiGuard.scan(transcript.toString());
+        if (!survivors.isEmpty()) {
+            meters.counter("cipherchat.ai.redacted.requests", "outcome", "pii_detected").increment();
+            log.warn("Redacted summary refused: PII survived client redaction userId={} detectors={}", userId, survivors);
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "pii_detected",
+                    "Identifiable data survived redaction (" + String.join(", ", survivors) + "). Nothing was sent to the model.");
+        }
+
+        String summary;
+        try {
+            summary = ai.complete("Summarize this chat conversation in 3-5 bullet points. Be concise and focus on decisions, "
+                    + "key topics, and action items. Bracketed tokens such as [PERSON_1] are placeholders: keep them exactly as "
+                    + "written. Reply ONLY with the bullet points, no intro:\n\n" + transcript, 300);
+        } catch (ApiException e) {
+            meters.counter("cipherchat.ai.redacted.requests", "outcome", "unavailable").increment();
+            throw e;
+        }
+        meters.counter("cipherchat.ai.redacted.requests", "outcome", "ok").increment();
+        audit.publishDetached(Audited.of(userId, "ai.summarize_redacted", body.scope(),
+                body.scopeId() == null ? null : body.scopeId().toString(),
+                Map.of("policyVersion", body.policyVersion() == null ? "" : body.policyVersion(),
+                        "entityCounts", body.entityCounts() == null ? Map.of() : body.entityCounts(),
+                        "lines", body.transcript().size()),
+                req.getRemoteAddr()));
         return Map.of("summary", summary.isBlank() ? "Could not generate summary." : summary);
     }
 

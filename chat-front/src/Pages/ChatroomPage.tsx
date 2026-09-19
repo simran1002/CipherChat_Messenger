@@ -768,6 +768,10 @@ const ChatroomPage = ({ user }: ChatroomPageProps) => {
 
       <AICoPilot
         chatroomId={chatroomId}
+        transcript={messages
+          .filter((m) => m.type === "text" && typeof m.message === "string" && m.message.trim().length > 0)
+          .map((m) => ({ who: m.name ?? "?", text: m.message }))}
+        knownNames={onlineUsers.map((u) => u.name).filter((n): n is string => typeof n === "string")}
         isOpen={showAI}
         onClose={() => setShowAI(false)}
         onSelectSuggestion={(text: string) => setNewMessage(text)}

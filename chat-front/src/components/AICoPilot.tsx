@@ -8,16 +8,22 @@ import {
 } from "@heroicons/react/24/outline";
 import api, { apiErrorMessage } from "../services/api";
 import { makeToast } from "../utils/toast";
+import { summarizeRedacted, type TranscriptLine } from "../privacy/redactedSummary";
 
 interface AICoPilotProps {
   chatroomId: string | undefined;
+  /** Recent text messages of the open room; the summary is built from these after local redaction. */
+  transcript?: TranscriptLine[];
+  /** Names to redact even when they appear inside message text (room roster). */
+  knownNames?: string[];
   onSelectSuggestion: (suggestion: string) => void;
   isOpen: boolean;
   onClose: () => void;
 }
 
-const AICoPilot = ({ chatroomId, onSelectSuggestion, isOpen, onClose }: AICoPilotProps) => {
+const AICoPilot = ({ chatroomId, transcript, knownNames, onSelectSuggestion, isOpen, onClose }: AICoPilotProps) => {
   const [summary, setSummary] = useState("");
+  const [redactedCount, setRedactedCount] = useState<number | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
@@ -26,8 +32,17 @@ const AICoPilot = ({ chatroomId, onSelectSuggestion, isOpen, onClose }: AICoPilo
     setLoadingSummary(true);
     setSummary("");
     try {
-      const res = await api.post(`/api/v1/ai/rooms/${chatroomId}/summarize`, { limit: 50 });
-      setSummary(res.data.summary);
+      if (transcript && transcript.length > 0 && chatroomId) {
+        // Privacy-preserving path: names, emails, phones and ids are replaced with tokens in the
+        // browser; the server and the model never see them, and the answer is rehydrated locally.
+        const result = await summarizeRedacted("room", chatroomId, transcript.slice(-50), knownNames ?? []);
+        setSummary(result.summary);
+        setRedactedCount(Object.values(result.entityCounts).reduce((a, b) => a + b, 0));
+      } else {
+        const res = await api.post(`/api/v1/ai/rooms/${chatroomId}/summarize`, { limit: 50 });
+        setSummary(res.data.summary);
+        setRedactedCount(null);
+      }
     } catch (err) {
       const msg = apiErrorMessage(err, "AI summarization unavailable");
       setSummary(`⚠️ ${msg}`);
@@ -94,6 +109,11 @@ const AICoPilot = ({ chatroomId, onSelectSuggestion, isOpen, onClose }: AICoPilo
                   className="mt-2 p-3 bg-gray-700/60 rounded-xl text-xs text-gray-300 leading-relaxed whitespace-pre-line border border-gray-600"
                 >
                   {summary}
+                  {redactedCount !== null && (
+                    <p className="mt-2 text-[10px] text-emerald-400/80">
+                      {redactedCount} identifier{redactedCount === 1 ? "" : "s"} redacted on this device before sending
+                    </p>
+                  )}
                 </motion.div>
               )}
             </div>
