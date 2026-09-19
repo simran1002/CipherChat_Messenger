@@ -64,10 +64,10 @@ const guarantees = [
 ];
 
 const stats = [
-  { value: "10,000", label: "concurrent sockets, one pod" },
-  { value: "176 ms", label: "ACK p95 under load" },
-  { value: "285", label: "automated tests" },
-  { value: "60/60", label: "messages survive a pod kill" },
+  { value: "5,000", label: "sockets held on one pod, 0 dropped" },
+  { value: "54 ms", label: "send-to-ACK p95 under load" },
+  { value: "250+", label: "automated tests, real Postgres · Redis · Kafka" },
+  { value: "1 row", label: "per message, even when it is sent twice" },
 ];
 
 const IndexPage = () => {
@@ -234,8 +234,9 @@ const IndexPage = () => {
               <span className="text-lg font-bold text-white">CipherChat</span>
             </div>
             <p className="text-gray-500 text-sm">
-              TypeScript · React · Socket.IO · MongoDB · Redis — 285 automated
-              tests, RFC-vectored crypto, kill-a-pod verified
+              Java 21 · Spring Boot · PostgreSQL · Redis · Kafka · React —
+              RFC-vectored crypto, every number on this page measured and
+              reproducible from the repository
             </p>
             <p className="text-gray-600 text-xs mt-3">
               &copy; {new Date().getFullYear()} CipherChat · MIT licensed

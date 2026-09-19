@@ -7,6 +7,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import { SocketContext } from "./contexts/SocketContext";
 import api, { getSocketUrl, refreshAccessToken } from "./services/api";
 import * as heartbeatSvc from "./services/HeartbeatService";
+import * as DeviceOwner from "./services/DeviceOwner";
 import type { AppSocket, AuthUser } from "./types";
 
 const IndexPage = lazy(() => import("./Pages/IndexPage"));
@@ -99,8 +100,19 @@ function App() {
     if (token && userStr) {
       try {
         const userObj = JSON.parse(userStr) as AuthUser;
-        setUser(userObj);
-        setupSocket();
+        // No-op for the normal case (same account restoring its session on reload); only actually wipes
+        // if this stored session somehow belongs to an account other than this browser's recorded owner.
+        void DeviceOwner.claim(userObj.id).catch(() => {}).finally(() => {
+          setUser(userObj);
+          setupSocket();
+          setIsLoading(false);
+        });
+        return () => {
+          if (socketRef.current) {
+            socketRef.current.disconnect();
+            socketRef.current = null;
+          }
+        };
       } catch {
         localStorage.removeItem("CC_User");
       }
@@ -141,7 +153,7 @@ function App() {
                   />
                   <Route
                     path="/register"
-                    element={user ? <Navigate to="/dashboard" replace /> : <RegisterPage />}
+                    element={user ? <Navigate to="/dashboard" replace /> : <RegisterPage setUser={setUser} />}
                   />
                   <Route
                     path="/dashboard"

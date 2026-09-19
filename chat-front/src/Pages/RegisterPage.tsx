@@ -12,9 +12,16 @@ import {
 } from "@heroicons/react/24/outline";
 import { makeToast } from "../utils/toast";
 import api, { apiErrorMessage } from "../services/api";
+import * as DeviceOwner from "../services/DeviceOwner";
+import { useSocket } from "../contexts/SocketContext";
 import type { AuthUser } from "../types";
 
-const RegisterPage = () => {
+interface RegisterPageProps {
+  setUser: (u: AuthUser) => void;
+}
+
+const RegisterPage = ({ setUser }: RegisterPageProps) => {
+  const { setupSocket } = useSocket();
   const [formData, setFormData] = useState({
     username: "",
     email: "",
@@ -73,6 +80,8 @@ const RegisterPage = () => {
       });
       const data = response.data as { message: string; token: string; user: AuthUser };
       let user = data.user;
+      // Same account-isolation guard as login: a fresh account is still a new owner for this browser.
+      await DeviceOwner.claim(user.id);
       localStorage.setItem("CC_Token", data.token);
 
       if (dp) {
@@ -94,7 +103,9 @@ const RegisterPage = () => {
       makeToast("success", data.message);
       // Auto-login: store user, then go straight to dashboard
       localStorage.setItem("CC_User", JSON.stringify(user));
-      navigate("/");
+      setUser(user);
+      setupSocket();
+      navigate("/dashboard");
     } catch (err) {
       makeToast("error", apiErrorMessage(err, "An error occurred. Please try again."));
     } finally {

@@ -12,6 +12,7 @@ import {
 } from "@heroicons/react/24/outline";
 import { makeToast } from "../utils/toast";
 import api, { apiErrorMessage } from "../services/api";
+import * as DeviceOwner from "../services/DeviceOwner";
 import type { AuthUser } from "../types";
 
 interface LoginPageProps {
@@ -39,7 +40,11 @@ const LoginPage = ({ setUser }: LoginPageProps) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  const finishLogin = (data: LoginSuccess) => {
+  const finishLogin = async (data: LoginSuccess) => {
+    // Before anything touches the socket, E2EE or the offline queue: if this browser was last used by a
+    // DIFFERENT account, that account's keys, decrypted history and queued sends must not leak into this
+    // session. A no-op when it's the same person signing back in.
+    await DeviceOwner.claim(data.user.id);
     makeToast("success", data.message);
     localStorage.setItem("CC_Token", data.token);
     localStorage.setItem("CC_User", JSON.stringify(data.user));
@@ -62,7 +67,7 @@ const LoginPage = ({ setUser }: LoginPageProps) => {
         setPendingToken(data.pendingToken);
         return;
       }
-      finishLogin(data as LoginSuccess);
+      await finishLogin(data as LoginSuccess);
     } catch (err) {
       makeToast("error", apiErrorMessage(err, "An error occurred. Please try again."));
     } finally {
@@ -75,7 +80,7 @@ const LoginPage = ({ setUser }: LoginPageProps) => {
     setIsLoading(true);
     try {
       const response = await api.post("/api/v1/auth/login/2fa", { pendingToken, code: totpCode });
-      finishLogin(response.data as LoginSuccess);
+      await finishLogin(response.data as LoginSuccess);
     } catch (err) {
       const code = (err as { response?: { data?: { code?: string } } })?.response?.data?.code;
       makeToast("error", apiErrorMessage(err, "That code didn't match."));
