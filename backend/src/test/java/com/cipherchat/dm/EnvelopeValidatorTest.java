@@ -35,10 +35,43 @@ class EnvelopeValidatorTest {
         assertThatCode(() -> EnvelopeValidator.validate(withInit)).doesNotThrowAnyException();
     }
 
+    private static Map<String, Object> validRatchet() {
+        Map<String, Object> e = valid();
+        e.put("v", 2);
+        e.put("dh", b64(32));
+        e.put("pn", 3);
+        e.put("n", 0);
+        return e;
+    }
+
+    @Test
+    void acceptsDoubleRatchetEnvelopes_andChecksTheHeaderShape() {
+        assertThatCode(() -> EnvelopeValidator.validate(validRatchet())).doesNotThrowAnyException();
+
+        Map<String, Object> noKey = validRatchet();
+        noKey.remove("dh");
+        assertThatThrownBy(() -> EnvelopeValidator.validate(noKey)).hasMessageContaining("ratchet key");
+
+        Map<String, Object> shortKey = validRatchet();
+        shortKey.put("dh", b64(31));
+        assertThatThrownBy(() -> EnvelopeValidator.validate(shortKey)).hasMessageContaining("ratchet key");
+
+        Map<String, Object> negative = validRatchet();
+        negative.put("n", -1);
+        assertThatThrownBy(() -> EnvelopeValidator.validate(negative)).hasMessageContaining("chain number");
+    }
+
+    @Test
+    void ratchetHeaderFieldsAreNotAllowedOnV1Envelopes() {
+        Map<String, Object> e = valid();
+        e.put("dh", b64(32));
+        assertThatThrownBy(() -> EnvelopeValidator.validate(e)).hasMessageContaining("Unexpected");
+    }
+
     @Test
     void rejectsWrongVersion() {
         Map<String, Object> e = valid();
-        e.put("v", 2);
+        e.put("v", 3);
         assertThatThrownBy(() -> EnvelopeValidator.validate(e)).isInstanceOf(ApiException.class)
                 .hasMessageContaining("version");
     }

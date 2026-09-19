@@ -244,6 +244,26 @@ export async function loadPreview(conversationId: string): Promise<CachedPreview
 // ── Reset ────────────────────────────────────────────────────────────────────
 
 /** Wipe everything (encryption reset / logout of the only account). */
+/** Shredding support: remove every v1 session and the preview of one conversation. */
+export async function deleteConversationData(conversationId: string): Promise<number> {
+  const db = await openDb();
+  return new Promise<number>((resolve, reject) => {
+    const t = db.transaction(["sessions", "previews"], "readwrite");
+    let removed = 0;
+    const cursorReq = t.objectStore("sessions").index("byConversation").openKeyCursor(IDBKeyRange.only(conversationId));
+    cursorReq.onsuccess = () => {
+      const cursor = cursorReq.result;
+      if (!cursor) return;
+      t.objectStore("sessions").delete(cursor.primaryKey);
+      removed++;
+      cursor.continue();
+    };
+    t.objectStore("previews").delete(conversationId);
+    t.oncomplete = () => resolve(removed);
+    t.onerror = () => reject(t.error);
+  });
+}
+
 export async function wipeKeyStore(): Promise<void> {
   const db = await openDb();
   await Promise.all(

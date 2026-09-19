@@ -161,6 +161,9 @@ const ChatroomPage = ({ user }: ChatroomPageProps) => {
     notificationService.requestPermission();
   }, []);
 
+  // Latest catch-up function, reachable from the long-lived socket handlers without re-subscribing them.
+  const catchUpRef = useRef<() => Promise<void>>(async () => {});
+
   // Connection state + offline-queue drain (the presence heartbeat lives at
   // the App level for the socket's whole lifetime — see App.tsx)
   useEffect(() => {
@@ -169,7 +172,7 @@ const ChatroomPage = ({ user }: ChatroomPageProps) => {
     const handleConnect = async () => {
       setIsConnected(true);
       await drainOfflineQueue(socket);
-      await catchUpAfterReconnect();
+      await catchUpRef.current();
     };
     const handleDisconnect = () => setIsConnected(false);
 
@@ -214,6 +217,8 @@ const ChatroomPage = ({ user }: ChatroomPageProps) => {
       // best effort: the next reconnect or a manual reload still converges by sequence
     }
   };
+
+  catchUpRef.current = catchUpAfterReconnect;
 
   const scrollToBottom = useCallback((smooth = true) => {
     listRef.current?.scrollToBottom(smooth);

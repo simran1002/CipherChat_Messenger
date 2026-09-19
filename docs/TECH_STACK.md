@@ -56,8 +56,11 @@ Every technology in the repository, what it is used for, and where it lives. Ver
 | Axios | 1.20 | REST client with refresh-cookie handling |
 | React Router | 6.30 | Routing |
 | Framer Motion, Tailwind | — | Motion and styling |
-| Web Crypto API | browser | AES-256-GCM, X3DH-style key agreement, Ed25519 prekey signatures (E2EE lives in the client) |
-| Vitest, Testing Library, ESLint | — | 153 unit tests, lint, typecheck |
+| Web Crypto API, `@noble/curves` / `@noble/hashes` | browser | AES-256-GCM, X3DH-style key agreement, Ed25519 prekey signatures, Double Ratchet (envelope v2), per-conversation vault keys (E2EE lives in the client) |
+| Orama | 3 | On-device full-text index in a Web Worker; snapshots sealed with AES-GCM in IndexedDB |
+| `cbor-x` | 1 | Decodes the CBOR delta-sync response (server side: Jackson 3 CBOR data format) |
+| Service Worker + Background Sync | browser | Drains the idempotent offline queue after the tab is closed |
+| Vitest, Testing Library, ESLint | — | 191 unit tests, lint, typecheck |
 | nginx | 1.27-alpine | Serves the built bundle, `/healthz` |
 
 ## Delivery

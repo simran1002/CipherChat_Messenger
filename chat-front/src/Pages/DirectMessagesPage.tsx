@@ -10,6 +10,8 @@ import {
   LockClosedIcon,
   PaperClipIcon,
   ShieldCheckIcon,
+  ArrowPathRoundedSquareIcon,
+  TrashIcon,
 } from "@heroicons/react/24/outline";
 import { makeToast } from "../utils/toast";
 import api, { apiErrorMessage } from "../services/api";
@@ -131,6 +133,9 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
   const [dmSearch, setDmSearch] = useState("");
   // Ranked, typo-tolerant hits from the on-device index (search worker); null = not searched yet.
   const [indexHits, setIndexHits] = useState<Set<string> | null>(null);
+  // Double Ratchet: opt-in for sessions THIS device starts; a conversation the peer started on it just works.
+  const [ratchetOptIn, setRatchetOptIn] = useState(() => e2eeService.doubleRatchetEnabled());
+  const [convOnRatchet, setConvOnRatchet] = useState(false);
 
   const { status: e2eeStatus, refresh: refreshE2EE } = useE2EE();
 
@@ -563,6 +568,50 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
   const e2eeReady = e2eeStatus.state === "ready";
   const allE2EE = messages.length > 0 && messages.every((m) => m.encrypted);
 
+  useEffect(() => {
+    if (!activeConv) {
+      setConvOnRatchet(false);
+      return;
+    }
+    let cancelled = false;
+    void e2eeService.usesDoubleRatchet(activeConv._id).then((on) => {
+      if (!cancelled) setConvOnRatchet(on);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeConv, messages.length]);
+
+  const toggleRatchet = () => {
+    const next = !ratchetOptIn;
+    e2eeService.setDoubleRatchetEnabled(next);
+    setRatchetOptIn(next);
+    makeToast(
+      "success",
+      next
+        ? "Double Ratchet on: conversations you start now get per-message forward secrecy"
+        : "Double Ratchet off for new conversations (existing ones keep their protocol)"
+    );
+  };
+
+  const shredActiveConversation = async () => {
+    if (!activeConv) return;
+    const ok = window.confirm(
+      "Shred this conversation on this device?\n\nThe conversation key is destroyed, so the locally stored history, " +
+        "the encryption sessions and the search index for it become permanently unreadable here. " +
+        "The other person keeps their own copy. This cannot be undone."
+    );
+    if (!ok) return;
+    try {
+      const result = await e2eeService.shredConversation(activeConv._id);
+      setMessages([]);
+      setConvOnRatchet(false);
+      makeToast("success", `Shredded: ${result.sealedRows} sealed records and ${result.v1Sessions} sessions destroyed`);
+    } catch {
+      makeToast("error", "Could not shred this conversation");
+    }
+  };
+
   // Feed the on-device index with whatever this tab has decrypted. Idempotent: the worker dedupes on
   // message id + text, so re-running on every render of the list costs nothing once indexed.
   useEffect(() => {
@@ -712,6 +761,33 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
                   title="View safety number"
                 >
                   <ShieldCheckIcon className="w-5 h-5 text-gray-400" />
+                </button>
+              )}
+              {e2eeReady && (
+                <button
+                  onClick={toggleRatchet}
+                  className={`p-2 hover:bg-gray-700 rounded-lg transition-colors ${ratchetOptIn || convOnRatchet ? "bg-emerald-500/10" : ""}`}
+                  aria-label="Toggle Double Ratchet for new conversations"
+                  aria-pressed={ratchetOptIn}
+                  title={
+                    convOnRatchet
+                      ? "This conversation uses the Double Ratchet: every message key is destroyed after use"
+                      : ratchetOptIn
+                        ? "Double Ratchet is on for conversations you start"
+                        : "Turn on the Double Ratchet (per-message forward secrecy) for conversations you start"
+                  }
+                >
+                  <ArrowPathRoundedSquareIcon className={`w-5 h-5 ${ratchetOptIn || convOnRatchet ? "text-emerald-400" : "text-gray-400"}`} />
+                </button>
+              )}
+              {e2eeReady && (
+                <button
+                  onClick={() => void shredActiveConversation()}
+                  className="p-2 hover:bg-red-500/10 rounded-lg transition-colors"
+                  aria-label="Shred this conversation on this device"
+                  title="Cryptographic shredding: destroy this conversation's key on this device"
+                >
+                  <TrashIcon className="w-5 h-5 text-gray-400 hover:text-red-400" />
                 </button>
               )}
             </div>

@@ -108,6 +108,10 @@ export interface DmEnvelope {
   sessionId: string;
   ctr: number;
   ct: string;
+  /** v2 (Double Ratchet) header: sender ratchet key, previous chain length, number in chain. */
+  dh?: string;
+  pn?: number;
+  n?: number;
   init?: { ephPub: string; ik: string; spkId: number };
 }
 

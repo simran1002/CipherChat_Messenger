@@ -22,7 +22,7 @@ conversations in a third-party SaaS — legal clinics, healthcare practices, new
 [Architecture](docs/ARCHITECTURE.md) ·
 [System design](docs/SYSTEM_DESIGN.md) ·
 [API](docs/API.md) ·
-[10 ADRs](docs/adr/) ·
+[14 ADRs](docs/adr/) ·
 [Demo script](docs/DEMO.md)
 
 <img src="docs/media/screenshots/chatroom.png" alt="A live room: reactions, @mentions, a pinned message, presence roster, typing indicator — over the exactly-once delivery pipeline" width="900"/>
@@ -58,6 +58,17 @@ One **Java 21 / Spring Boot 4 modular monolith** (Spring Modulith — module bou
 | **Operator-proof DMs** | X3DH-lite, per-direction HMAC-SHA256 chains, AES-256-GCM with routing-bound AAD, padding, session rotation — attachments included | client crypto pinned to RFC/NIST vectors; server verifies the **Ed25519 prekey signature**, validates envelope structure, and enforces **`UNIQUE (conversation, sender, sessionId, ctr)`** — a counter is spent once, cluster-wide. `DirectMessageIT` replays a counter and gets `409 replayed_counter` |
 | **Failure survival** | stateless pods, Redis pub/sub fan-out, graceful drain (`maxUnavailable: 0`, preStop, grace > shutdown), **transactional outbox** so Kafka being down never fails a send, idempotent consumers with a `processed_events` ledger and DLT | `docker compose … --scale backend=2` and kill a pod; publications queue in Postgres and replay; `KafkaConsumersIT` |
 | **Content-free observability** | Actuator + Micrometer → Prometheus; `cipherchat.*` counters and p50/p95/p99 send latency; structured JSON logs with correlation ids; in-app metrics page | every metric passes one test: *could this line reveal what someone said?* Counts, latencies, outcomes only |
+
+## Privacy beyond transport encryption
+
+Four client-heavy capabilities, each with an ADR that states its limits:
+
+| Capability | What it does | Decision record |
+|---|---|---|
+| **Double Ratchet sessions (opt-in)** | per-message forward secrecy and post-compromise recovery for DMs; envelope v2 rides the same server replay index. Plaintext lives in a per-conversation encrypted vault, so **deleting one key shreds the conversation on that device** | [ADR-0011](docs/adr/0011-double-ratchet-and-shredding.md) |
+| **On-device encrypted search** | ranked, typo-tolerant search over decrypted DMs in a Web Worker; index snapshots are AES-GCM sealed at rest; the server never sees a query | [ADR-0012](docs/adr/0012-on-device-encrypted-search.md) |
+| **PII redaction in front of the LLM** | the browser replaces names, emails, phones, cards and ids with stable tokens and keeps the map; the gateway re-scans and **fails closed (`422`)**; the answer is rehydrated locally | [ADR-0013](docs/adr/0013-pii-redaction-before-llm.md) |
+| **Delta sync + background flush** | reconnect fetches only messages after the client's per-room sequence cursor, negotiated as CBOR; a service worker drains the offline queue after the tab is closed, safely, because every send is idempotent | [ADR-0014](docs/adr/0014-delta-sync-and-background-flush.md) |
 
 ## The product — one real session
 
@@ -228,6 +239,8 @@ Every row below was produced in this repository's state, on one Windows 11 lapto
 | Ciphertext tampering or replay | GCM tag over AAD; client counter dedup + server unique `(conversation, sender, session, ctr)` index |
 | Mixed-and-matched key bundles | the directory verifies the prekey signature with the identity key before storing |
 | Key theft from a stolen DB | prekeys are public; refresh tokens hashed; TOTP seeds sealed; backups client-encrypted |
+| A seized or compromised device reading past/future DMs (v2 sessions) | Double Ratchet: message keys are deleted after use and the DH ratchet heals after a compromise; per-conversation shredding ([ADR-0011](docs/adr/0011-double-ratchet-and-shredding.md)) |
+| The model provider learning who is in a room summary | client-side redaction with a server-side fail-closed re-scan ([ADR-0013](docs/adr/0013-pii-redaction-before-llm.md)) |
 
 | Does NOT protect against | Why |
 |---|---|
@@ -249,7 +262,7 @@ Every row below was produced in this repository's state, on one Windows 11 lapto
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Render (with the root-cause analysis of the failed deploys), Compose, AWS/Kubernetes |
 | [LOCAL_DEVELOPMENT.md](docs/LOCAL_DEVELOPMENT.md) | run it, test it, environment variables, troubleshooting |
 | [PHASE1_AUDIT.md](docs/PHASE1_AUDIT.md) | what the previous implementation looked like and why it was replaced |
-| [adr/](docs/adr/) | 10 architecture decision records |
+| [adr/](docs/adr/) | 14 architecture decision records |
 
 ## Repository layout
 

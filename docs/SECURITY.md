@@ -49,6 +49,8 @@ Security-relevant actions publish `Audited` events → Kafka `audit-events` → 
 
 Protocol summary (client-side, `chat-front/src/crypto`): X3DH-lite session setup (identity X25519 + Ed25519-signed prekey), per-direction HMAC-SHA256 chain ratchets, per-counter HKDF message keys, AES-256-GCM with AAD over `{v, conversationId, senderId, sessionId, ctr}`, plaintext padded to 256-byte buckets, session rotation every 200 messages / 7 days. Full rationale in the ADRs under `docs/adr`.
 
+**Envelope v2 (opt-in, ADR-0011)** replaces the counter-addressed chains with a Double Ratchet: a fresh X25519 ratchet key per reply, message keys deleted after use, skipped keys bounded (1000 per step, 2000 stored). Ratchet state and decrypted plaintext are sealed in a per-conversation vault under a non-extractable key; deleting that key is the shredding operation. The server validates the v2 shape (32-byte `dh`, bounded `pn`/`n`) and nothing else; the replay index is unchanged because `ctr` stays a monotonic per-session send count. v2 sessions are excluded from the recovery backup on purpose: a restored ratchet on a second browser would fork the state.
+
 The server's role, and its only cryptographic operations:
 
 1. **Key directory** — stores public bundles and **verifies the prekey signature with the identity key** (JDK Ed25519) so it cannot serve a mix-and-match bundle. Identity changes bump `keyVersion`; peers show a safety-number-changed banner.
@@ -59,6 +61,14 @@ What the server can see: who talks to whom, when, how often, ciphertext sizes (b
 
 Rooms are **not** E2EE by design — the AI summarise/suggest features need server-readable transcripts, and rooms are the collaborative, searchable space. The UI labels the difference; this is a product trade-off, documented in ADR-0004.
 
+## Data minimisation towards the model provider
+
+`POST /api/v1/ai/summarize-redacted` accepts only a transcript the client has already redacted to tokens (`[PERSON_1]`, `[EMAIL_1]`, …). `PiiGuard` re-scans it and returns `422 pii_detected` before any model call if an email, phone, card (Luhn), government id, record number, IP or URL survived. The audit event records entity counts and the policy version, never text. This narrows what the provider sees; it is not anonymisation: names outside the roster and identifying context are not detected (ADR-0013).
+
+## Local data at rest (browser)
+
+Three IndexedDB databases, all sealed with non-extractable WebCrypto keys: the key store (identity, v1 sessions, previews), the vault (v2 ratchets and plaintext, one key per conversation) and the search snapshots. Key reset wipes all three. Browser deletion is not secure erasure; the guarantee rests on the keys never having been exportable.
+
 ## Observability without content
 
 Logs never include message bodies. The `MessageSent` event carries a 120-character preview used only for the mention toast and notification row (rooms are server-readable anyway); DM events carry no content. Metrics are counts and timings.
@@ -66,5 +76,7 @@ Logs never include message bodies. The `MessageSent` event carries a 120-charact
 ## Known gaps
 
 - No account lockout after N failed logins (rate limiter + audit only) — a deliberate choice against user-facing DoS; revisit with IP reputation.
-- Single-device E2EE identity (documented limitation; multi-device would need per-device keys and sender-keys for fan-out).
+- Single-device E2EE identity (documented limitation; multi-device would need per-device keys and sender-keys for fan-out). v2 history is device-local by design.
+- No one-time prekeys: the first message of a session relies on the signed prekey alone, as in v1.
+- No client-side telemetry: decrypt failures and search/vault storage errors are visible to the user, not yet to an operator.
 - Password reset by email is not implemented (no mail sender); admins reset via the database in this version.

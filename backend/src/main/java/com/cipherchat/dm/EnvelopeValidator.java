@@ -26,7 +26,8 @@ final class EnvelopeValidator {
 
     static void validate(Map<String, Object> e) {
         if (e == null) throw bad("Envelope is required.");
-        if (!(e.get("v") instanceof Number v) || v.intValue() != 1) throw bad("Unsupported envelope version.");
+        if (!(e.get("v") instanceof Number v) || (v.intValue() != 1 && v.intValue() != 2)) throw bad("Unsupported envelope version.");
+        boolean ratchet = v.intValue() == 2;
         if (!(e.get("sessionId") instanceof String sid) || sid.isEmpty() || sid.length() > 64) throw bad("Malformed sessionId.");
         if (!(e.get("ctr") instanceof Number ctr) || ctr.longValue() < 0 || ctr.longValue() > 1_000_000_000L) throw bad("Malformed counter.");
         if (!(e.get("ct") instanceof String ct) || ct.isEmpty() || ct.length() > MAX_CT_BYTES * 4 / 3 + 4) throw bad("Ciphertext missing or too large.");
@@ -39,10 +40,17 @@ final class EnvelopeValidator {
             if (!(m.get("ik") instanceof String ik) || decodedLength(ik) != KEY_BYTES) throw bad("Malformed identity key.");
             if (!(m.get("spkId") instanceof Number)) throw bad("Malformed prekey id.");
         }
+        if (ratchet) {
+            // v2 = Double Ratchet header. The server checks shape only: it cannot (and must not be able to)
+            // tell whether the ratchet key or the chain numbers are "right" — the recipient's AEAD does that.
+            if (!(e.get("dh") instanceof String dh) || decodedLength(dh) != KEY_BYTES) throw bad("Malformed ratchet key.");
+            if (!(e.get("pn") instanceof Number pn) || pn.longValue() < 0 || pn.longValue() > 1_000_000_000L) throw bad("Malformed previous-chain length.");
+            if (!(e.get("n") instanceof Number n) || n.longValue() < 0 || n.longValue() > 1_000_000_000L) throw bad("Malformed chain number.");
+        }
         for (String k : e.keySet()) {
-            if (!k.equals("v") && !k.equals("sessionId") && !k.equals("ctr") && !k.equals("ct") && !k.equals("init")) {
-                throw bad("Unexpected envelope field: " + k);
-            }
+            boolean common = k.equals("v") || k.equals("sessionId") || k.equals("ctr") || k.equals("ct") || k.equals("init");
+            boolean header = ratchet && (k.equals("dh") || k.equals("pn") || k.equals("n"));
+            if (!common && !header) throw bad("Unexpected envelope field: " + k);
         }
     }
 

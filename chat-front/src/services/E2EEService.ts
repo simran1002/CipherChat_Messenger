@@ -16,6 +16,9 @@ import {
   type PeerBundle,
 } from "../crypto/session";
 import { open, openOwn, seal, type WireEnvelope } from "../crypto/envelope";
+import { openV2, sealV2, startInitiator, startResponder, type WireEnvelopeV2 } from "../crypto/envelopeV2";
+import * as vault from "../crypto/vault";
+import { shredConversationIndex } from "../search/searchClient";
 import { computeSafetyNumber, formatSafetyNumber } from "../crypto/safetyNumber";
 import {
   createAndPublishIdentity,
@@ -40,6 +43,12 @@ export interface DecryptResult {
 }
 
 const UNDECRYPTABLE = "⚠ Unable to decrypt — sent with a previous encryption key";
+const UNDECRYPTABLE_V2 = "⚠ Not stored on this device — forward-secret messages cannot be re-opened from the server";
+
+/** Either wire format; decrypt() dispatches on `v`. */
+export type AnyEnvelope = WireEnvelope | WireEnvelopeV2;
+
+const V2_FLAG = "CC_E2EE_V2";
 
 class E2EEService {
   private identity: StoredIdentity | null = null;
@@ -107,6 +116,7 @@ class E2EEService {
     await keyStore.wipeKeyStore();
     // The on-device search index holds decrypted text: a key reset must take it (and its key) with it.
     await wipeSearchIndex();
+    await vault.wipeVault();
     this.refresh();
     return this.setUp();
   }
@@ -119,10 +129,22 @@ class E2EEService {
    * call burns a counter rather than reusing one — the invariant that makes
    * nonce reuse impossible.
    */
-  async encrypt(conversationId: string, peerId: string, text: string): Promise<WireEnvelope> {
+  async encrypt(conversationId: string, peerId: string, text: string): Promise<AnyEnvelope> {
     const identity = this.requireIdentity();
 
     return keyStore.withLock(conversationId, async () => {
+      // v2 (Double Ratchet) when this conversation already runs on it — the peer may have started
+      // it — or when this device opted in for new sessions. Otherwise the v1 chain sessions.
+      const ratchet = await vault.latestRatchet(conversationId);
+      if (ratchet || this.doubleRatchetEnabled()) {
+        const session = ratchet ?? startInitiator(conversationId, peerId, identity, await this.fetchAndPinBundle(peerId));
+        const me = this.myUserId();
+        const { envelope, next } = sealV2(session, me, text);
+        // Ratchet advance and our own plaintext commit together, BEFORE the ciphertext exists
+        // outside this function: the sender can never re-derive this message key.
+        await vault.commit(conversationId, next, { key: vault.messageKey(next.sessionId, me, envelope.ctr), text });
+        return envelope;
+      }
       let session = await this.activeSession(conversationId);
       let init: WireEnvelope["init"] | undefined;
 
@@ -158,12 +180,13 @@ class E2EEService {
   async decrypt(
     conversationId: string,
     senderId: string,
-    envelope: WireEnvelope,
+    envelope: AnyEnvelope,
     opts: { own: boolean }
   ): Promise<DecryptResult> {
     const identity = this.identity ?? (await keyStore.loadIdentity());
     if (!identity) return { ok: false, text: UNDECRYPTABLE };
     this.identity = identity;
+    if (envelope.v === 2) return this.decryptV2(conversationId, senderId, envelope, opts, identity);
 
     try {
       let session = await keyStore.loadSession(envelope.sessionId);
@@ -191,6 +214,83 @@ class E2EEService {
     } catch {
       return { ok: false, text: UNDECRYPTABLE };
     }
+  }
+
+  /**
+   * v2: the vault is the source of truth for anything already seen (history, our own messages,
+   * another tab's work); only a never-seen peer message touches the ratchet, under the cross-tab
+   * lock, and the advanced state is committed together with the plaintext it produced.
+   */
+  private async decryptV2(
+    conversationId: string,
+    senderId: string,
+    envelope: WireEnvelopeV2,
+    opts: { own: boolean },
+    identity: StoredIdentity
+  ): Promise<DecryptResult> {
+    const key = vault.messageKey(envelope.sessionId, senderId, envelope.ctr);
+    try {
+      const stored = await vault.loadMessage(conversationId, key);
+      if (stored !== null) return { ok: true, text: stored };
+      if (opts.own) return { ok: false, text: UNDECRYPTABLE_V2 };
+      return await keyStore.withLock(conversationId, async () => {
+        const again = await vault.loadMessage(conversationId, key);
+        if (again !== null) return { ok: true, text: again };
+        let session = await vault.loadRatchet(conversationId, envelope.sessionId);
+        let keyChanged = false;
+        if (!session) {
+          if (!envelope.init) return { ok: false, text: UNDECRYPTABLE_V2 };
+          keyChanged = await this.checkPeerIdentity(senderId, envelope.init.ik);
+          session = startResponder(conversationId, senderId, envelope.sessionId, identity, envelope.init);
+        }
+        const { text, next } = openV2(session, senderId, envelope);
+        await vault.commit(conversationId, next, { key, text });
+        return { ok: true, text, keyChanged };
+      });
+    } catch {
+      return { ok: false, text: UNDECRYPTABLE_V2 };
+    }
+  }
+
+  // ── Double Ratchet opt-in and cryptographic shredding ─────────────────────
+  doubleRatchetEnabled(): boolean {
+    try {
+      return localStorage.getItem(V2_FLAG) === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  /** New sessions this device STARTS use the Double Ratchet; existing sessions keep their protocol. */
+  setDoubleRatchetEnabled(on: boolean): void {
+    try {
+      if (on) localStorage.setItem(V2_FLAG, "1");
+      else localStorage.removeItem(V2_FLAG);
+    } catch {
+      // storage blocked: stays off
+    }
+  }
+
+  /** Does this conversation currently run on the Double Ratchet on this device? */
+  async usesDoubleRatchet(conversationId: string): Promise<boolean> {
+    return (await vault.latestRatchet(conversationId)) !== null;
+  }
+
+  /**
+   * Cryptographic shredding of one conversation ON THIS DEVICE: the conversation key (and with it
+   * the sealed history and ratchet), the v1 sessions, the preview and the search snapshot. For v2
+   * traffic the server's ciphertext is already unopenable (message keys were destroyed on use);
+   * v1 ciphertext becomes unopenable here because its session keys are gone. The peer's copy is
+   * the peer's: shredding is a local guarantee, not a remote wipe.
+   */
+  async shredConversation(conversationId: string): Promise<{ sealedRows: number; v1Sessions: number }> {
+    return keyStore.withLock(conversationId, async () => {
+      const sealedRows = await vault.shredConversation(conversationId);
+      const v1Sessions = await keyStore.deleteConversationData(conversationId);
+      await shredConversationIndex(conversationId);
+      void refreshBackup().catch(() => {}); // the server-side backup must forget the v1 sessions too
+      return { sealedRows, v1Sessions };
+    });
   }
 
   // ── Safety numbers / pins ──────────────────────────────────────────────────
