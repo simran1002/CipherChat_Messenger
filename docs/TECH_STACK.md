@@ -16,6 +16,7 @@ Every technology in the repository, what it is used for, and where it lives. Ver
 | Flyway | via Boot | Owns the schema: every table, index, constraint, outbox | `backend/src/main/resources/db/migration` |
 | Spring Kafka | 4 | Producers/consumers, `DefaultErrorHandler` with exponential back-off, `-dlt` topics | `com.cipherchat.shared.kafka`, consumers |
 | Lettuce (Spring Data Redis) | via Boot | Rate limits, sequence counters, dedup cache, presence, pub/sub fan-out | `com.cipherchat.shared.redis`, gateway |
+| — (no dependency; plain Java) | — | CRDT merge algorithms for ephemeral state (grow-only/PN counters, HLC-ordered LWW register) — a conflict-resolution library proven correct by semilattice-law tests, not wired into the live single-Redis presence path today. See [ADR-0015](adr/0015-crdt-conflict-resolution-for-ephemeral-state.md) | `com.cipherchat.presence.crdt` |
 | Resilience4j | 2.x | Circuit breaker + retry on outbound LLM calls | `com.cipherchat.ai` |
 | Micrometer + Prometheus | via Boot | `/actuator/prometheus`, custom send-latency and session gauges | `MetricsConfig` |
 | springdoc-openapi | 2.x | Live OpenAPI at `/swagger-ui.html`, `docs/API.md` derived from it | controllers |

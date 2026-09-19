@@ -22,7 +22,7 @@ conversations in a third-party SaaS — legal clinics, healthcare practices, new
 [Architecture](docs/ARCHITECTURE.md) ·
 [System design](docs/SYSTEM_DESIGN.md) ·
 [API](docs/API.md) ·
-[14 ADRs](docs/adr/) ·
+[15 ADRs](docs/adr/) ·
 [Demo script](docs/DEMO.md)
 
 <img src="docs/media/screenshots/chatroom.png" alt="A live room: reactions, @mentions, a pinned message, presence roster, typing indicator — over the exactly-once delivery pipeline" width="900"/>
@@ -262,7 +262,7 @@ Every row below was produced in this repository's state, on one Windows 11 lapto
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Render (with the root-cause analysis of the failed deploys), Compose, AWS/Kubernetes |
 | [LOCAL_DEVELOPMENT.md](docs/LOCAL_DEVELOPMENT.md) | run it, test it, environment variables, troubleshooting |
 | [PHASE1_AUDIT.md](docs/PHASE1_AUDIT.md) | what the previous implementation looked like and why it was replaced |
-| [adr/](docs/adr/) | 14 architecture decision records |
+| [adr/](docs/adr/) | 15 architecture decision records |
 
 ## Repository layout
 
