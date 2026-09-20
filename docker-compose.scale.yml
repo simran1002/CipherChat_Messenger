@@ -5,12 +5,15 @@
 #
 #   docker compose -f docker-compose.yml -f docker-compose.scale.yml up --build --scale backend=2
 #
-# Kill-a-pod test: open two browsers, `docker compose kill cipherchat-backend-1`,
-# both clients reconnect to the survivor within a few seconds; nothing sent in
-# between is lost (offline queue drains, idempotent on clientMessageId).
+# Kill-a-pod test (automated: `python scripts/verify-failover.py`): SIGKILL one replica
+# (`docker kill cipherchat-backend-1` — the container name, not the compose service name)
+# while a client is mid-conversation; it reconnects to the survivor within seconds and
+# nothing sent in between is lost or duplicated (idempotent on clientMessageId).
 services:
   backend:
-    ports: []                       # only reachable through the LB
+    # `ports: []` would NOT clear the base file's 8080:8080 — Compose appends lists when merging, so every
+    # replica would still try to bind host port 8080 and collide with the LB. `!reset` really empties it.
+    ports: !reset []                # only reachable through the LB
     deploy:
       replicas: 2
     environment:

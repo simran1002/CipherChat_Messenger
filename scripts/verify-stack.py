@@ -211,6 +211,28 @@ def main():
             return s == 200 and any(n["payload"].get("messageId") == m2["messageId"] for n in inbox)
         check("[kafka back] the mention sent during the outage becomes a notification (≤ 60 s)", wait_until(has_second, 60, 2))
 
+        # A SHORT outage is absorbed by the producer's own retries. One longer than delivery.timeout.ms (60 s) fails
+        # the send for good; those publications stay incomplete in the outbox, and only the periodic resubmission
+        # (OutboxResubmitter) can deliver them without a restart.
+        print("\n--- chaos: prolonged Kafka outage (> the producer's 60 s delivery timeout) ---")
+        compose("stop", "kafka")
+        try:
+            time.sleep(2)
+            st, m3, _ = http("POST", f"/api/v1/chatrooms/{room_id}/messages", {"message": "mention during a LONG outage @bob", "mentions": [bob["id"]]}, alice["token"])
+            check("[long outage] send still 201", st == 201, f"{st} {m3}")
+            time.sleep(80)
+            check("[long outage] the publication is still pending after the producer gave up",
+                  psql("select count(*) from event_publication where completion_date is null").isdigit()
+                  and int(psql("select count(*) from event_publication where completion_date is null")) >= 1)
+        finally:
+            compose("start", "kafka")
+        check("[long outage → kafka back] the outbox drains WITHOUT a restart (≤ 240 s)", wait_until(drained, 240, 3),
+              psql("select count(*) from event_publication where completion_date is null"))
+        def has_third():
+            s, inbox, _ = http("GET", "/api/v1/notifications", token=bob["token"])
+            return s == 200 and any(n["payload"].get("messageId") == m3["messageId"] for n in inbox)
+        check("[long outage → kafka back] the mention becomes a notification", wait_until(has_third, 90, 3))
+
     failed = [n for n, ok in results if not ok]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
     if failed:

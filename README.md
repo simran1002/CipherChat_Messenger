@@ -54,7 +54,7 @@ One **Java 21 / Spring Boot 4 modular monolith** (Spring Modulith — module bou
 
 | Guarantee | Mechanism | Where it is enforced |
 |---|---|---|
-| **Exactly-once persistence** over at-least-once transport | client UUID + ACK/retry → IndexedDB offline queue → Redis `SET NX` dedup → seeded per-room `INCR` sequence → **`UNIQUE (room, sequence)` and `UNIQUE (client_message_id)`** | the database. Redis only makes the common case fast; the unique indexes make a wrong counter or a missed dedup impossible to persist. `MessagingIT` double-sends and asserts one row |
+| **Exactly-once persistence** over at-least-once transport | client UUID + ACK/retry → IndexedDB offline queue → Redis `SET NX` dedup → seeded per-room `INCR` sequence → **`UNIQUE (room, sequence)` and `UNIQUE (room, client_message_id)`** | the database. Redis only makes the common case fast; the unique indexes make a wrong counter or a missed dedup impossible to persist. `MessagingIT` double-sends and asserts one row |
 | **Operator-proof DMs** | X3DH-lite, per-direction HMAC-SHA256 chains, AES-256-GCM with routing-bound AAD, padding, session rotation — attachments included | client crypto pinned to RFC/NIST vectors; server verifies the **Ed25519 prekey signature**, validates envelope structure, and enforces **`UNIQUE (conversation, sender, sessionId, ctr)`** — a counter is spent once, cluster-wide. `DirectMessageIT` replays a counter and gets `409 replayed_counter` |
 | **Failure survival** | stateless pods, Redis pub/sub fan-out, graceful drain (`maxUnavailable: 0`, preStop, grace > shutdown), **transactional outbox** so Kafka being down never fails a send, idempotent consumers with a `processed_events` ledger and DLT | `docker compose … --scale backend=2` and kill a pod; publications queue in Postgres and replay; `KafkaConsumersIT` |
 | **Content-free observability** | Actuator + Micrometer → Prometheus; `cipherchat.*` counters and p50/p95/p99 send latency; structured JSON logs with correlation ids; in-app metrics page | every metric passes one test: *could this line reveal what someone said?* Counts, latencies, outcomes only |
@@ -180,23 +180,28 @@ Backend from the IDE with dependencies in Docker, and everything about local wor
 cd backend && ./mvnw test        # unit + Modulith boundary tests (no Docker)
 cd backend && ./mvnw verify      # + Testcontainers integration tests: real Postgres, Redis, Kafka, STOMP
 cd chat-front && npm test        # components, hooks, offline queue, crypto known-answer tests
+
+docker compose up -d --build --wait
+cd e2e && npm ci && npx playwright install chromium && npm test   # end to end: real browsers + hostile clients
+python scripts/verify-stack.py --chaos                            # Redis paused, Kafka down past its timeout
 ```
 
-Integration suites exercise the *contract*, not the code: auth rotation and replayed-cookie rejection, double-send absorption with gapless sequences, private-room 403s, E2EE replay `409`, a Kafka-fed notification appearing exactly once, a STOMP send ACKed and broadcast to another socket. CI runs them against service containers, gates coverage with JaCoCo, formats with Spotless, scans lockfiles and images with Trivy, publishes images to GHCR and deploys through a manually approved environment.
+Integration suites exercise the *contract*, not the code: auth rotation and replayed-cookie rejection, double-send absorption with gapless sequences, private-room 403s, E2EE replay `409`, a Kafka-fed notification appearing exactly once, a STOMP send ACKed and broadcast to another socket. The **end-to-end suite** ([`e2e/`](e2e), Playwright) then drives the whole composed stack: two real browsers exchanging end-to-end encrypted messages while the test asserts the server holds only ciphertext, a second account on the same browser inheriting nothing from the first, forged STOMP frames refused, a stolen refresh cookie revoking its whole session family, 30 concurrent sends landing gapless. CI runs all of it, gates coverage with JaCoCo, formats with Spotless, scans lockfiles and images with Trivy, publishes images to GHCR and deploys only after the end-to-end job is green. What each layer proves, and the defects the end-to-end layer found that every lower layer had passed: [docs/TESTING.md](docs/TESTING.md).
 
 Crypto (client) is pinned to **RFC 7748 / 8032 / 5869 and NIST GCM test vectors**, with tamper, replay, out-of-order and rotation-boundary suites and a committed golden transcript. The server's TOTP is checked against the **RFC 6238** vectors.
 
 ## CI/CD
 
-Three workflows under `.github/workflows`, plus CodeQL and Dependabot. Full stack inventory: [docs/TECH_STACK.md](docs/TECH_STACK.md).
+Four workflows under `.github/workflows`, plus CodeQL and Dependabot. Full stack inventory: [docs/TECH_STACK.md](docs/TECH_STACK.md).
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `ci.yml` | every push and PR | Spotless → unit → Testcontainers integration suites → JaCoCo gate; frontend lint/typecheck/test/build; Trivy dependency scan (SARIF to the Security tab); kubeconform + `terraform validate` + Compose config; images built and scanned. On `main`: images pushed to GHCR as `sha-<commit>` and `main`, then **staging** deploy |
+| `ci.yml` | every push and PR | Spotless → unit → Testcontainers integration suites → JaCoCo gate; frontend lint/typecheck/test/build; **E2E**: the composed stack from the production images, the Playwright suite, then the Redis/Kafka chaos drills (report, traces and container logs kept as artifacts); Trivy dependency scan (SARIF to the Security tab); kubeconform + `terraform validate` + Compose config; images built and scanned. On `main`: images pushed to GHCR as `sha-<commit>` and `main`, then **staging** deploy, gated on the E2E job |
+| `scale.yml` | push to `main`, nightly, manual | Two backend replicas behind the nginx load balancer: cross-replica fan-out, **kill-a-pod** (SIGKILL the replica holding a client's socket mid-conversation, then assert Postgres holds every message exactly once, in order, gapless), and the API suite re-run through the balancer |
 | `release.yml` | tag `vX.Y.Z` | Jar built with the tag as its version (`/actuator/info`), images pushed as `X.Y.Z`, `X.Y`, `latest`, scanned, CycloneDX SBOMs, GitHub Release with generated notes and checksummed assets, then **production** deploy behind environment approval |
 | `deploy.yml` | called by the two above, or run by hand for a rollback to any tag | Render deploy hooks (`RENDER_DEPLOY_HOOK_BACKEND`/`_FRONTEND` secrets, readiness polled on `BACKEND_URL`) and/or Kubernetes on EKS via OIDC (`EKS_CLUSTER_NAME`, `AWS_DEPLOY_ROLE_ARN`); both targets enabled purely by environment configuration |
 | `codeql.yml` | push, PR, weekly | Static analysis, Java and TypeScript, security-extended queries |
-| `dependabot.yml` | weekly | Maven, npm, Docker base images, Actions; grouped PRs |
+| `dependabot.yml` | monthly | Maven, npm (frontend and e2e), Docker base images, Actions; grouped PRs |
 
 Cut a release:
 
@@ -210,24 +215,27 @@ Every row below was produced in this repository's state, on one Windows 11 lapto
 
 | Claim | Status | Evidence |
 |---|---|---|
-| Backend compiles; unit + Modulith boundary tests | VERIFIED | `./mvnw clean test` — 27 tests, 0 failures |
-| Integration suites against real Postgres 17, Redis 7, Kafka (Testcontainers) | VERIFIED | `./mvnw verify` — 23 tests in 6 suites, 0 failures, JaCoCo gate met (60 % lines, 43 % branches) |
+| Backend compiles; unit + Modulith boundary tests | VERIFIED | `./mvnw verify` — 73 unit tests, 0 failures |
+| Integration suites against real Postgres 17, Redis 7, Kafka (Testcontainers) | VERIFIED | `./mvnw verify` — 37 tests in 10 suites, 0 failures, JaCoCo gate met (60 % lines) |
+| End to end: real browsers and hostile clients against the composed stack | VERIFIED | `npm test` in `e2e/` — 34 Playwright tests (17 API, 17 browser), 0 failures, run repeatedly; also 17/17 of the API tests through two replicas behind the load balancer. [docs/TESTING.md](docs/TESTING.md) |
 | Exactly-once persistence (same `clientMessageId` twice → one row, `duplicate:true`) | VERIFIED | `MessagingIT`, `StompGatewayIT` |
 | E2EE replay backstop (`(conversation, sender, sessionId, ctr)` reused → `409 replayed_counter`) | VERIFIED | `DirectMessageIT` |
 | STOMP: JWT at CONNECT, ACK + broadcast, outsider `SUBSCRIBE` refused | VERIFIED | `StompGatewayIT` |
 | Kafka: outbox → consumer → one side effect; duplicate event delivery → one row; poison record → DLT; failing side effect retried then dead-lettered | VERIFIED | `KafkaConsumersIT`, `KafkaResilienceIT` |
-| Frontend typecheck, lint, tests, production build | VERIFIED | 153 Vitest tests, 0 lint errors, `vite build` |
+| Frontend typecheck, lint, tests, production build | VERIFIED | 206 Vitest tests, 0 lint errors, `tsc`, `vite build` |
 | Dependency vulnerabilities (frontend lockfile) | VERIFIED | Trivy: 0 HIGH/CRITICAL after upgrading axios and react-router |
 | Secrets in the tree | VERIFIED | Trivy secret scan over every source directory: none; `git grep` for key/credential patterns: none |
 | Backend image builds from an empty cache | VERIFIED | `docker compose build --no-cache backend` — twice: the first image built but could not start (layered-jar launcher layout, fixed), the rebuilt image was not observed starting before the environment failed (next row) |
 | Kubernetes manifests | DESIGNED | kubeconform: 11 objects valid against the 1.30 schemas; not applied to a cluster |
 | Terraform | DESIGNED | `terraform fmt`, `init`, `validate` pass; not planned or applied against an AWS account |
 | Compose stack end to end (health, auth, exactly-once send, private-room 403s, E2EE replay 409, Kafka notification, consumer ledger) | VERIFIED | `scripts/verify-stack.py`: 19/19 checks against the real Compose stack |
+| Redis and Kafka failure drills | VERIFIED | `scripts/verify-stack.py --chaos`: 36/36. Redis paused → room sends fail closed with a retryable 503, DMs keep working, readiness recovers with gapless sequences. Kafka stopped → sends still succeed via the outbox and drain on recovery; a **prolonged** outage (past the producer's 60 s delivery timeout) drains without a restart |
+| Two-replica fan-out and kill-a-pod | VERIFIED | `scripts/verify-fanout.py` 5/5; `scripts/verify-failover.py` 7/7: the replica holding the sender's socket is SIGKILLed after 20 acknowledged messages, the client reconnects to the survivor in ≈ 0.5 s, and the database holds all 60 messages exactly once, in order, sequences 1–60 |
 | Latency and throughput on one pod | MEASURED | k6, 30 senders in 5 rooms, 43 msg/s: send → ACK p50 23 ms / p95 54 ms, broadcast p50 27 ms / p95 64 ms, 0 duplicates persisted. Full method, caveats and the four defects the measurement found: [docs/BENCHMARKS.md](docs/BENCHMARKS.md) |
 | Connection density on one pod | MEASURED | 5,000 STOMP sockets opened and held with 0 failures (≈ 97 KB heap per socket); broadcast to all 5,000 subscribers of one room reaches 100 % of them at p50 1.0 s / p95 6.6 s, the serial cost of one very large room on the simple broker. 10,000 was not completed on the shared VM: see [docs/BENCHMARKS.md](docs/BENCHMARKS.md) |
-| Redis/Kafka failure drills, two-replica fan-out, `EXPLAIN` of the hot queries, image scan of the running stack | NOT VERIFIED | scripted (`bash scripts/verify-all.sh` → `docs/VERIFICATION-RUN.md`); not run in this pass |
+| `EXPLAIN` of the hot queries, image scan of the running stack | NOT VERIFIED | scripted (`bash scripts/verify-all.sh` → `docs/VERIFICATION-RUN.md`); not run in this pass |
 | Render deployment | NOT VERIFIED | the exact image was built and started locally; the hosted deploy was not observed (no Render account/logs) |
-| GitHub Actions run | NOT VERIFIED | workflow is structurally validated; it has not run on a pushed commit |
+| GitHub Actions run | PARTLY VERIFIED | `ci.yml` and `release.yml` ran green on pushed commits (release `v1.0.0`). The new `e2e` job and `scale.yml` are validated with `actionlint` and their steps were run locally exactly as written, but have not yet run on GitHub |
 | 200 msg/s / p95 < 250 ms on one pod | PARTLY MEASURED | p95 well under 250 ms at 43 msg/s (above); 200 msg/s was not driven on this VM. The 10,000-socket figure remains the previous Node implementation's ([WHY-DIFFERENT.md](docs/WHY-DIFFERENT.md)); the Java gateway is measured to 5,000 |
 
 ## Threat model (DMs)

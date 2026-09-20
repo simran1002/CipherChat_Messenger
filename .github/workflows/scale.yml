@@ -1,0 +1,78 @@
+name: Scale-out verification
+
+# The claims a single-replica run can't prove: that two stateless replicas behind a load balancer share
+# one truth. Slower and heavier than the per-commit E2E job in ci.yml, so it runs on main, nightly (a
+# regression that only shows under failover shouldn't wait for someone to touch that code) and on demand.
+#
+#   fan-out    a message sent through replica A reaches a subscriber connected to replica B (Redis pub/sub)
+#   failover   SIGKILL the replica holding a client's socket mid-conversation: the client reconnects to the
+#              survivor and afterwards Postgres holds every message exactly once, in order, gapless
+#   api suite  the whole API security/delivery spec re-run THROUGH the balancer (concurrent exactly-once
+#              sends now land on different replicas)
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 2 * * *"      # 02:17 UTC, off the hour to stay out of the scheduled-job stampede
+  workflow_dispatch:
+
+concurrency:
+  group: scale-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "22"
+  AUTH_RATE_LIMIT_PER_15M: "1000000"
+
+jobs:
+  scale-out:
+    name: Two replicas · fan-out, kill-a-pod, API suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - name: Start two backend replicas behind the nginx load balancer
+        run: |
+          COMPOSE="docker compose -f docker-compose.yml -f docker-compose.scale.yml"
+          $COMPOSE up -d --build --scale backend=2 --wait --wait-timeout 900
+          $COMPOSE ps
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+      - name: Install dependencies
+        run: |
+          pip install --quiet websocket-client
+          cd e2e && npm ci
+      - name: Cross-replica fan-out
+        run: python scripts/verify-fanout.py
+      - name: Kill-a-pod (SIGKILL the sender's replica mid-stream)
+        run: python scripts/verify-failover.py
+      - name: API suite through the load balancer
+        working-directory: e2e
+        run: npx playwright test --project=api
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: scale-playwright-report
+          path: e2e/playwright-report
+          retention-days: 14
+      - name: Container logs
+        if: failure()
+        run: docker compose -f docker-compose.yml -f docker-compose.scale.yml logs --no-color --tail=400 > compose.log
+      - name: Upload container logs
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: scale-compose-logs
+          path: compose.log
+          retention-days: 14
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.scale.yml down -v

@@ -31,6 +31,9 @@
     "typecheck": "cd chat-front && npm run typecheck",
     "stack": "docker compose up --build",
     "stack:scale": "docker compose -f docker-compose.yml -f docker-compose.scale.yml up --build --scale backend=2",
-    "stack:s3": "docker compose --profile s3 up --build"
+    "stack:s3": "docker compose --profile s3 up --build",
+    "test:e2e": "cd e2e && npm test",
+    "test:e2e:api": "cd e2e && npm run test:api",
+    "test:e2e:ui": "cd e2e && npm run test:ui"
   }
 }

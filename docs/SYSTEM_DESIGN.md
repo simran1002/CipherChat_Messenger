@@ -43,7 +43,7 @@ At-least-once transport (client retries until ACK) + idempotent persistence = ef
 1. Client attaches a UUID `clientMessageId`; retries reuse it; an IndexedDB queue holds it offline.
 2. Server fast path: Redis `SET NX dedup:<id>` (10 min) — a retry within the window is answered from cache.
 3. Sequence: Redis `INCR seq:<room>`, seeded once from `max(sequence_number)` in Postgres; gapless, monotonic per room.
-4. Persist in one transaction with two unique indexes as the backstop: `(room, sequence)` and `client_message_id`. If Redis lied (flush, restart, race), the index refuses the second insert and the service resolves to the existing row — the ACK still reports `duplicate: true`.
+4. Persist in one transaction with two unique indexes as the backstop: `(room, sequence)` and `(room, client_message_id)`. If Redis lied (flush, restart, race), the index refuses the second insert and the service resolves to the existing row — the ACK still reports `duplicate: true`.
 5. Outbox row in the same transaction; fan-out and Kafka publication happen strictly after commit.
 
 Result: the DB alone guarantees uniqueness and ordering; Redis only makes the common case fast.

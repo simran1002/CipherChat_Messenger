@@ -142,16 +142,19 @@ def main():
     except websocket.WebSocketTimeoutException:
         check("no second broadcast for the duplicate", True)
 
-    # Outsider subscription refused
+    # Outsider subscription refused. Public rooms are readable by any signed-in user by design, so the
+    # refusal is checked against a PRIVATE room the outsider is not a member of.
+    st, priv = http("POST", "/api/v1/chatrooms", {"name": f"fanout-priv-{uuid.uuid4().hex[:8]}", "isPrivate": True}, a["token"])
+    assert st == 201, priv
     se = Stomp(eve["token"])
-    se.subscribe(f"/topic/rooms/{room_id}")
+    se.subscribe(f"/topic/rooms/{priv['id']}")
     try:
         f = se.recv(timeout=5)
-        check("outsider SUBSCRIBE to the room → STOMP ERROR", f["command"] == "ERROR", f)
+        check("outsider SUBSCRIBE to a private room → STOMP ERROR", f["command"] == "ERROR", f)
     except websocket.WebSocketTimeoutException:
-        check("outsider SUBSCRIBE to the room → STOMP ERROR", False, "no ERROR frame within 5 s")
+        check("outsider SUBSCRIBE to a private room → STOMP ERROR", False, "no ERROR frame within 5 s")
     except websocket.WebSocketConnectionClosedException:
-        check("outsider SUBSCRIBE to the room → STOMP ERROR (connection closed by server)", True)
+        check("outsider SUBSCRIBE to a private room → STOMP ERROR (connection closed by server)", True)
     se.close()
 
     for s in (sa, sb):

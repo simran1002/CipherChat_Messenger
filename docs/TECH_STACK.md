@@ -34,6 +34,8 @@ Every technology in the repository, what it is used for, and where it lives. Ver
 | Spring Boot Test + `@ServiceConnection` | Wires containers into the context without property plumbing |
 | Testcontainers 2 (Postgres 17, Redis 7, Kafka native) | Integration suites against real infrastructure |
 | Spring Modulith test | Module-boundary verification |
+| Playwright 1.62 (`e2e/`) | End-to-end: real Chromium contexts and raw HTTP/STOMP clients against the composed stack; traces, screenshots and video kept on failure. See [TESTING.md](TESTING.md) |
+| `scripts/verify-*.py` | Stack contract, Redis/Kafka chaos drills, two-replica fan-out and kill-a-pod checks |
 | JaCoCo | Merged unit + IT coverage, gate at 60 % lines |
 | Spotless (Eclipse formatter) | Formatting and unused-import gate |
 
@@ -61,7 +63,7 @@ Every technology in the repository, what it is used for, and where it lives. Ver
 | Orama | 3 | On-device full-text index in a Web Worker; snapshots sealed with AES-GCM in IndexedDB |
 | `cbor-x` | 1 | Decodes the CBOR delta-sync response (server side: Jackson 3 CBOR data format) |
 | Service Worker + Background Sync | browser | Drains the idempotent offline queue after the tab is closed |
-| Vitest, Testing Library, ESLint | — | 191 unit tests, lint, typecheck |
+| Vitest, Testing Library, ESLint | — | 206 unit tests, lint, typecheck |
 | nginx | 1.27-alpine | Serves the built bundle, `/healthz` |
 
 ## Delivery

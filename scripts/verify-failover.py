@@ -18,6 +18,7 @@ What it does
 
 Exit code is non-zero on any failed check. The killed replica is restarted at the end.
 """
+import atexit
 import json
 import os
 import subprocess
@@ -166,6 +167,11 @@ def holder_of_new_socket(before):
     return None
 
 
+def restore_replicas():
+    """Bring the killed replica back — registered as soon as one is killed, so a failed run never leaves the stack short."""
+    subprocess.run(COMPOSE + ["up", "-d", "--scale", "backend=2", "--no-recreate"], capture_output=True, cwd=ROOT)
+
+
 def main():
     containers = backend_containers()
     check("two backend replicas are running behind the load balancer", len(containers) >= 2, containers)
@@ -188,11 +194,12 @@ def main():
     print(f"      sender's socket is on {containers[victim]}")
 
     ids = [str(uuid.uuid4()) for _ in range(TOTAL)]
-    retried, duplicates_absorbed, reconnects = 0, 0, 0
+    retried, duplicates_absorbed, reconnects, throttled = 0, 0, 0, 0
     killed_at, recovered_at = None, None
     i = 0
     while i < TOTAL:
         if i == KILL_AFTER and killed_at is None:
+            atexit.register(restore_replicas)
             subprocess.run(["docker", "kill", "--signal", "KILL", victim], capture_output=True)
             killed_at = time.time()
             print(f"      SIGKILL {containers[victim]} after {KILL_AFTER} acknowledged messages")
@@ -211,6 +218,12 @@ def main():
             if ack is None:
                 raise TimeoutError("no ACK")
             if not ack.get("ok"):
+                if ack.get("error") == "rate_limited":
+                    # The per-user send budget (burst 20, 2/s) refused it. A real client backs off and retries the
+                    # SAME clientMessageId; nothing was persisted, so this is not a retry of a delivered message.
+                    throttled += 1
+                    time.sleep(0.7)
+                    continue
                 check(f"message {i + 1} acknowledged ok", False, ack)
                 sys.exit(1)
             if ack.get("duplicate"):
@@ -230,7 +243,7 @@ def main():
     check("the sender's replica was killed mid-stream and the client recovered", gap is not None)
     if gap is not None:
         print(f"      delivery gap felt by the sender: {gap:.1f} s  |  reconnects: {reconnects}  |  sends retried: {retried}"
-              f"  |  retries the server answered duplicate:true: {duplicates_absorbed}")
+              f"  |  retries the server answered duplicate:true: {duplicates_absorbed}  |  rate-limit backoffs: {throttled}")
 
     # Ground truth: what Postgres holds, read through the surviving replica.
     rows, before = [], None
@@ -242,7 +255,7 @@ def main():
         if not page:
             break
         rows.extend(page)
-        more = isinstance(body, dict) and body.get("hasMore")
+        more = isinstance(body, dict) and (body.get("cursor") or {}).get("hasMore")
         if not more:
             break
         before = min(m["sequenceNumber"] for m in page)
@@ -255,7 +268,7 @@ def main():
     check(f"sequence numbers are contiguous 1..{TOTAL}", seqs == list(range(1, TOTAL + 1)), seqs[:5] + ["..."] + seqs[-5:])
     check("persisted order equals send order", got_ids == ids)
 
-    subprocess.run(COMPOSE + ["up", "-d", "--scale", "backend=2", "--no-recreate"], capture_output=True, cwd=ROOT)
+    restore_replicas()
     print("      killed replica restarted")
 
     failed = [n for n, ok in results if not ok]

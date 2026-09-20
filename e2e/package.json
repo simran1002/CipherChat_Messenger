@@ -1,0 +1,19 @@
+{
+  "name": "cipherchat-e2e",
+  "private": true,
+  "version": "1.0.0",
+  "description": "End-to-end tests: real browsers and raw HTTP/STOMP clients against the running stack (frontend + backend + Postgres + Redis + Kafka).",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "test:api": "playwright test --project=api",
+    "test:ui": "playwright test --project=ui",
+    "typecheck": "tsc --noEmit",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.0",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.6.0"
+  }
+}

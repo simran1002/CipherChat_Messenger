@@ -34,14 +34,14 @@ event_publication       (Spring Modulith outbox — owned by Flyway V2 like ever
 | `id BIGINT IDENTITY` | primary key, insertion order |
 | `chatroom_id`, `sender_id` | FKs |
 | `sequence_number BIGINT` | per-room, gapless; **`UNIQUE (chatroom_id, sequence_number)`** |
-| `client_message_id UUID` | **partial unique index `WHERE client_message_id IS NOT NULL`** |
+| `client_message_id UUID` | **partial unique index on `(chatroom_id, client_message_id)` `WHERE client_message_id IS NOT NULL`** — scoped to the room, like the DM table's |
 | `body`, `type`, file/location columns, `reply_*`, `mentions UUID[]`, `pinned`, `edited`, `expires_at` | |
 | full-text search | **GIN** expression index on `to_tsvector('english', body)` — the query uses the same expression so the planner matches it |
 
 Two indexes implement exactly-once persistence:
 
 - `(chatroom_id, sequence_number)` unique: the Redis `INCR` counter hands out slots; if the counter were ever wrong (Redis flushed, seeded from a stale max) the second writer to a slot fails instead of producing two messages with one sequence.
-- `client_message_id` unique: a client retry that slipped past the Redis dedup key (TTL expired, Redis restarted) hits this and is resolved to the original row — the ACK still says `duplicate: true`.
+- `(chatroom_id, client_message_id)` unique: a client retry that slipped past the Redis dedup key (TTL expired, Redis restarted) hits this and is resolved to the original row — the ACK still says `duplicate: true`. Scoped to the room on purpose: a table-wide key made a client id colliding with one used in ANY other room fail the insert, and let the duplicate lookup answer with another room's message (V5).
 
 History is paginated on `sequence_number` (`WHERE sequence_number < :before ORDER BY sequence_number DESC LIMIT n+1`) — an index range scan regardless of room size, unlike `OFFSET`.
 
