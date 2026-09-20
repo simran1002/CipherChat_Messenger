@@ -58,6 +58,58 @@ class MessagingIT extends AbstractIntegrationTest {
         assertThat(messages).extracting(m -> m.get("sequenceNumber")).containsExactly(1, 2);
     }
 
+    /**
+     * The idempotency key is scoped to the room. It used to be unique across the whole table, so a client id that
+     * collided with one used in ANY other room failed the insert, and the duplicate lookup could answer with that
+     * other room's message — content and sequence number — to someone who was never a member of it.
+     */
+    @Test
+    void theSameClientIdInAnotherRoomIsAnIndependentMessage_neverTheOtherRoomsContent() {
+        Session alice = register("Alice Scoped");
+        Session bob = register("Bob Scoped");
+        String aliceRoom = createRoom(alice, "private-a-" + UUID.randomUUID().toString().substring(0, 8), true);
+        String bobRoom = createRoom(bob, "private-b-" + UUID.randomUUID().toString().substring(0, 8), true);
+        UUID sharedClientId = UUID.randomUUID();
+
+        ResponseEntity<Map> secret = send(alice, aliceRoom, "alice's confidential note", sharedClientId);
+        assertThat(secret.getStatusCode().value()).isEqualTo(201);
+
+        // Bob (not a member of Alice's room) reuses the very same client id in HIS room.
+        ResponseEntity<Map> bobs = send(bob, bobRoom, "bob's own message", sharedClientId);
+        assertThat(bobs.getStatusCode().value()).isEqualTo(201);
+        assertThat(bobs.getBody()).containsEntry("duplicate", false).containsEntry("sequenceNumber", 1);
+        assertThat(bobs.getBody().get("messageId")).isNotEqualTo(secret.getBody().get("messageId"));
+        assertThat(bobs.getBody().toString()).doesNotContain("confidential");
+
+        // Each room holds exactly its own message.
+        assertThat(messagesOf(alice, aliceRoom)).containsExactly("alice's confidential note");
+        assertThat(messagesOf(bob, bobRoom)).containsExactly("bob's own message");
+    }
+
+    @Test
+    void oneUserReusingAClientIdAcrossTwoRoomsStoresBoth() {
+        Session alice = register("Alice Twice");
+        String roomA = createRoom(alice, "twice-a-" + UUID.randomUUID().toString().substring(0, 8), false);
+        String roomB = createRoom(alice, "twice-b-" + UUID.randomUUID().toString().substring(0, 8), false);
+        UUID clientId = UUID.randomUUID();
+
+        assertThat(send(alice, roomA, "in A", clientId).getBody()).containsEntry("duplicate", false);
+        ResponseEntity<Map> inB = send(alice, roomB, "in B", clientId);
+        assertThat(inB.getStatusCode().value()).isEqualTo(201);
+        assertThat(inB.getBody()).containsEntry("duplicate", false);
+        assertThat(messagesOf(alice, roomB)).containsExactly("in B");
+
+        // ...while a genuine retry INSIDE one room is still absorbed.
+        assertThat(send(alice, roomA, "in A", clientId).getBody()).containsEntry("duplicate", true);
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> messagesOf(Session who, String roomId) {
+        ResponseEntity<Map> history = http().get().uri("/api/v1/chatrooms/{id}/messages", roomId)
+                .header(HttpHeaders.AUTHORIZATION, who.bearer()).retrieve().toEntity(Map.class);
+        return ((List<Map<String, Object>>) history.getBody().get("messages")).stream().map(m -> (String) m.get("message")).toList();
+    }
+
     @Test
     void privateRoomsAreInvisibleToNonMembers_publicRoomsAreJoinable() {
         Session owner = register("Owner");

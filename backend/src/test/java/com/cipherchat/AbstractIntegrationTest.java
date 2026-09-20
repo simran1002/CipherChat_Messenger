@@ -11,6 +11,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.web.client.RestClient;
 import org.testcontainers.DockerClientFactory;
 
@@ -23,6 +24,10 @@ import org.testcontainers.DockerClientFactory;
  * wire contract (status codes, ProblemDetail bodies, cookies) a browser sees.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+// Every IT registers accounts from the same address, so the suite as a whole would drain the per-IP auth
+// bucket (AuthThrottle) long before it finished. The per-IP budget is unit-tested (AuthThrottleTest); the
+// per-account login limit, which is keyed by email digest and unaffected by this, is exercised in AuthThrottleIT.
+@TestPropertySource(properties = "cipherchat.rate-limit.auth-per-15m=1000000")
 @Import(TestcontainersConfiguration.class)
 @EnabledIf(value = "dockerAvailable", disabledReason = "Docker is required for integration tests")
 public abstract class AbstractIntegrationTest {
