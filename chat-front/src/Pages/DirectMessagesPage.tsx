@@ -315,8 +315,8 @@ const DirectMessagesPage = ({}: DirectMessagesPageProps) => {
           encrypted,
           undecryptable,
           userId: data.userId,
-          name: data.name,
-          dp: data.dp,
+          name: data.user?.name ?? data.name,
+          dp: data.user?.dp ?? data.dp,
           createdAt: data.createdAt,
         };
         setMessages((prev) => {

@@ -146,6 +146,82 @@ class StompGatewayIT extends AbstractIntegrationTest {
         legit.disconnect();
     }
 
+    /**
+     * The simple broker relays whatever is addressed to /topic/** or /queue/** straight to subscribers, so an
+     * unchecked SEND lets any signed-in user publish a forged frame as the server: a fake newMessage into a
+     * room they never joined, or an event into another user's private queue. Clients may only SEND to /app/**.
+     */
+    @Test
+    void aClientCannotSendToBrokerDestinations_soItCannotForgeARoomsMessagesOrAnotherUsersEvents() throws Exception {
+        Session owner = register("Forge Owner");
+        Session eve = register("Forge Eve");
+        String room = createRoom(owner);
+
+        StompSession victim = connect(owner);
+        BlockingQueue<Map<String, Object>> inRoom = new LinkedBlockingQueue<>();
+        BlockingQueue<Map<String, Object>> inPrivateQueue = new LinkedBlockingQueue<>();
+        victim.subscribe("/topic/rooms/" + room, collectInto(inRoom));
+        victim.subscribe("/user/queue/events", collectInto(inPrivateQueue));
+        Thread.sleep(300);
+
+        // A refused SEND makes the broker close that session, so each forgery attempt gets its own connection.
+        StompSession forgeRoom = connect(eve);
+        forgeRoom.send("/topic/rooms/" + room, Map.of("event", "newMessage", "payload", Map.of("message", "FORGED BY EVE", "name", "Forge Owner")));
+        StompSession forgeQueue = connect(eve);
+        forgeQueue.send("/user/" + owner.id() + "/queue/events", Map.of("event", "dmNotification", "payload", Map.of("from", "FORGED")));
+
+        assertThat(inRoom.poll(3, TimeUnit.SECONDS)).as("forged frame delivered to the room topic").isNull();
+        assertThat(inPrivateQueue.poll(1, TimeUnit.SECONDS)).as("forged frame delivered to the victim's private queue").isNull();
+
+        // The legitimate path is untouched: a real send through /app still reaches the room.
+        StompSession legit = connect(owner);
+        legit.send("/app/rooms/send", Map.of("chatroomId", room, "message", "genuine", "clientMessageId", UUID.randomUUID().toString()));
+        Map<String, Object> real = inRoom.poll(10, TimeUnit.SECONDS);
+        assertThat(real).isNotNull().containsEntry("event", "newMessage");
+
+        victim.disconnect();
+        legit.disconnect();
+    }
+
+    /**
+     * A live DM frame has to say which conversation it belongs to and who sent it. The payload used to carry
+     * neither at the top level, so the client — which routes a frame by conversationId — dropped every live
+     * message in an open conversation; only history fetched on open ever rendered.
+     */
+    @Test
+    void aLiveDirectMessageFrameCarriesItsConversationAndSender() throws Exception {
+        Session sender = register("Dm Sender");
+        Session receiver = register("Dm Receiver");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> conv = http().post().uri("/api/v1/conversations")
+                .header(HttpHeaders.AUTHORIZATION, sender.bearer())
+                .body(Map.of("targetUserId", receiver.id().toString())).retrieve().toEntity(Map.class).getBody();
+        String conversation = (String) conv.get("id");
+
+        StompSession listening = connect(receiver);
+        BlockingQueue<Map<String, Object>> frames = new LinkedBlockingQueue<>();
+        listening.subscribe("/topic/dm/" + conversation, collectInto(frames));
+        Thread.sleep(300);
+
+        http().post().uri("/api/v1/conversations/{id}/messages", conversation)
+                .header(HttpHeaders.AUTHORIZATION, sender.bearer())
+                .body(Map.of("message", "routed live")).retrieve().toBodilessEntity();
+
+        Map<String, Object> frame = null;
+        for (int i = 0; i < 5 && (frame == null || !"newDirectMessage".equals(frame.get("event"))); i++) {
+            frame = frames.poll(5, TimeUnit.SECONDS);
+        }
+        assertThat(frame).isNotNull().containsEntry("event", "newDirectMessage");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) frame.get("payload");
+        assertThat(payload).containsEntry("conversationId", conversation).containsEntry("userId", sender.id().toString());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> user = (Map<String, Object>) payload.get("user");
+        assertThat(user).containsEntry("id", sender.id().toString()).containsKey("name");
+
+        listening.disconnect();
+    }
+
     @Test
     void connectWithoutAValidTokenIsRefused() {
         WebSocketStompClient client = new WebSocketStompClient(new StandardWebSocketClient());

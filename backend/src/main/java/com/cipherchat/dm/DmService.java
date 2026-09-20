@@ -195,7 +195,7 @@ public class DmService {
         Set<UUID> senders = rows.stream().map(DmMessage::getSenderId).collect(Collectors.toSet());
         Map<UUID, UserView.Summary> people = users.summaries(senders);
         return rows.stream().map(m -> new MessageView(
-                String.valueOf(m.getId()), m.getType(),
+                String.valueOf(m.getId()), m.getConversationId().toString(), m.getType(),
                 m.getType() == DmMessage.Type.PLAINTEXT_LEGACY ? m.getBody() : null,
                 m.getType() == DmMessage.Type.E2EE_V1 ? m.getEnvelope() : null,
                 m.getClientMessageId() == null ? null : m.getClientMessageId().toString(),

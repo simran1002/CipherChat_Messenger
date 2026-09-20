@@ -28,8 +28,13 @@ public final class DmDtos {
     public record ConversationView(String id, UserView.Summary participant, Preview lastMessage, Instant lastMessageAt) {
     }
 
+    /**
+     * {@code conversationId} is part of the view, not implied by where it was fetched: the same record is the
+     * payload of the live {@code newDirectMessage} frame, and a client subscribed to several conversations has
+     * nothing but this field to route the frame to the right one.
+     */
     public record MessageView(
-            String id, DmMessage.Type type, String message, Map<String, Object> envelope, String clientMessageId,
+            String id, String conversationId, DmMessage.Type type, String message, Map<String, Object> envelope, String clientMessageId,
             boolean edited, String userId, UserView.Summary user, Instant createdAt) {
     }
 

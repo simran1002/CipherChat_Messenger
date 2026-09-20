@@ -137,8 +137,11 @@ export interface NewDirectMessagePayload {
   envelope?: DmEnvelope;
   clientMessageId?: string | null;
   userId: string;
-  name: string;
-  dp: string;
+  /** The sender, as the server sends it ({@code DmDtos.MessageView.user}). */
+  user?: { id: string; name: string; dp?: string };
+  /** Legacy flat sender fields; the Java gateway sends {@code user} instead. */
+  name?: string;
+  dp?: string;
   createdAt: string;
 }
 
