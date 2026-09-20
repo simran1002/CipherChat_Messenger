@@ -137,6 +137,13 @@ cipherchat:
   presence:
     ttl: 90s                   # heartbeat every 30s; three misses = offline
     roster-cap: 100
+  outbox:
+    # A publication that failed while the broker was unreachable stays in event_publication, and Modulith only
+    # replays those at startup — so OutboxResubmitter retries them on a timer. resubmit-after must exceed the
+    # producer's delivery.timeout.ms (60 s) or an in-flight send would be sent twice.
+    resubmit-enabled: true
+    resubmit-interval: PT15S
+    resubmit-after: PT75S
   kafka:
     partitions: ${KAFKA_PARTITIONS:6}          # consumer-parallelism ceiling per topic
     consumer-concurrency: ${KAFKA_CONSUMER_CONCURRENCY:3}
@@ -230,6 +237,9 @@ spring:
     events:
       externalization:
         enabled: false
+cipherchat:
+  outbox:
+    resubmit-enabled: false     # nothing is externalized, so there is nothing to retry against a broker that isn't there
 management:
   health:
     kafka:
