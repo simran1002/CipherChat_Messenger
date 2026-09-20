@@ -4,11 +4,13 @@ const wipeKeyStore = vi.fn().mockResolvedValue(undefined);
 const wipeVault = vi.fn().mockResolvedValue(undefined);
 const wipeSearchIndex = vi.fn().mockResolvedValue(undefined);
 const clearQueue = vi.fn().mockResolvedValue(undefined);
+const refreshIdentityCache = vi.fn();
 
 vi.mock("../crypto/keyStore", () => ({ wipeKeyStore: () => wipeKeyStore() }));
 vi.mock("../crypto/vault", () => ({ wipeVault: () => wipeVault() }));
 vi.mock("../search/searchClient", () => ({ wipeSearchIndex: () => wipeSearchIndex() }));
 vi.mock("./OfflineQueue", () => ({ clear: () => clearQueue() }));
+vi.mock("./E2EEService", () => ({ default: { refresh: () => refreshIdentityCache() } }));
 
 import { claim } from "./DeviceOwner";
 
@@ -51,6 +53,8 @@ describe("DeviceOwner", () => {
     expect(wipeVault).toHaveBeenCalledTimes(1);
     expect(wipeSearchIndex).toHaveBeenCalledTimes(1);
     expect(clearQueue).toHaveBeenCalledTimes(1);
+    // ...and the in-memory identity the singleton cached for account A is dropped, not just the stores.
+    expect(refreshIdentityCache).toHaveBeenCalledTimes(1);
     expect(localStorage.getItem("CC_DeviceOwner")).toBe("user-b");
   });
 

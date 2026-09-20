@@ -75,8 +75,14 @@ export function toWebSocketUrl(origin: string): string {
 
 export function createStompSocket(origin: string): AppSocket {
   const listeners = new Map<string, Set<Handler>>();
+  // Live subscriptions on the CURRENT connection. They die with it, so they are rebuilt on every connect.
   const rooms = new Map<string, StompSubscription>();
   const dms = new Map<string, StompSubscription>();
+  // What the pages asked to join, independent of connection state. A page joins its room/conversation the
+  // moment it mounts — on a hard refresh or a deep link that is BEFORE the socket has finished connecting —
+  // so a join that could not be honoured yet must be remembered and replayed on connect, not dropped.
+  const wantedRooms = new Set<string>();
+  const wantedDms = new Set<string>();
   const pendingAcks = new Map<string, { cb: (ack: WireAck) => void; timer: ReturnType<typeof setTimeout> | null }>();
   let syncAck: (() => void) | null = null;
   const id = crypto.randomUUID();
@@ -148,26 +154,37 @@ export function createStompSocket(origin: string): AppSocket {
   }
 
   function subscribeRoom(roomId: string): void {
+    wantedRooms.add(roomId);
     if (!client.connected || rooms.has(roomId)) return;
     rooms.set(roomId, client.subscribe(`/topic/rooms/${roomId}`, onServerFrame));
   }
 
   function subscribeDm(conversationId: string): void {
+    wantedDms.add(conversationId);
     if (!client.connected || dms.has(conversationId)) return;
     dms.set(conversationId, client.subscribe(`/topic/dm/${conversationId}`, onServerFrame));
   }
 
+  /** Leave: forget the wish, and unsubscribe if there is a live connection to unsubscribe on. */
+  function unsubscribe(wanted: Set<string>, live: Map<string, StompSubscription>, id: string): void {
+    wanted.delete(id);
+    const sub = live.get(id);
+    live.delete(id);
+    try {
+      sub?.unsubscribe();
+    } catch {
+      // stompjs throws when the connection is already down — the broker dropped the subscription with it.
+    }
+  }
+
   client.onConnect = () => {
     subscribeUserQueues();
-    // Re-establish everything the pages had joined before the reconnect.
-    for (const roomId of Array.from(rooms.keys())) {
-      rooms.delete(roomId);
-      subscribeRoom(roomId);
-    }
-    for (const conv of Array.from(dms.keys())) {
-      dms.delete(conv);
-      subscribeDm(conv);
-    }
+    // Subscriptions of the previous connection are gone; rebuild everything the pages want, including joins
+    // requested before this first connect completed.
+    rooms.clear();
+    dms.clear();
+    for (const roomId of Array.from(wantedRooms)) subscribeRoom(roomId);
+    for (const conv of Array.from(wantedDms)) subscribeDm(conv);
     dispatch("connect");
   };
 
@@ -280,12 +297,9 @@ export function createStompSocket(origin: string): AppSocket {
         case "joinRoom":
           subscribeRoom((payload as { chatroomId: string }).chatroomId);
           break;
-        case "leaveRoom": {
-          const rid = (payload as { chatroomId: string }).chatroomId;
-          rooms.get(rid)?.unsubscribe();
-          rooms.delete(rid);
+        case "leaveRoom":
+          unsubscribe(wantedRooms, rooms, (payload as { chatroomId: string }).chatroomId);
           break;
-        }
         case "presenceUpdate":
           publish("/app/presence/update", payload);
           break;
@@ -310,12 +324,9 @@ export function createStompSocket(origin: string): AppSocket {
         case "joinDM":
           subscribeDm((payload as { conversationId: string }).conversationId);
           break;
-        case "leaveDM": {
-          const cid = (payload as { conversationId: string }).conversationId;
-          dms.get(cid)?.unsubscribe();
-          dms.delete(cid);
+        case "leaveDM":
+          unsubscribe(wantedDms, dms, (payload as { conversationId: string }).conversationId);
           break;
-        }
         case "directMessage":
           sendWithAck("/app/dm/send", payload as Record<string, unknown>, ack && ((a) => ack(toDmAck(a))));
           break;

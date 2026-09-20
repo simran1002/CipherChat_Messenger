@@ -8,6 +8,7 @@ import { SocketContext } from "./contexts/SocketContext";
 import api, { getSocketUrl, refreshAccessToken } from "./services/api";
 import * as heartbeatSvc from "./services/HeartbeatService";
 import * as DeviceOwner from "./services/DeviceOwner";
+import e2eeService from "./services/E2EEService";
 import type { AppSocket, AuthUser } from "./types";
 
 const IndexPage = lazy(() => import("./Pages/IndexPage"));
@@ -90,6 +91,9 @@ function App() {
     }
     setSocket(null);
     setUser(null);
+    // Forget the in-memory identity too: the next sign-in in this tab re-reads it from the key store instead
+    // of inheriting whoever was signed in before.
+    e2eeService.refresh();
     localStorage.removeItem("CC_Token");
     localStorage.removeItem("CC_User");
   }, []);

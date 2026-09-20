@@ -183,6 +183,7 @@ const Header = ({ user, onLogout }: HeaderProps) => {
                   <button
                     className="flex items-center gap-2 bg-gray-800 hover:bg-gray-700 px-3 py-2 rounded-xl border border-gray-700 hover:border-gray-600 transition-all"
                     onClick={() => setMenuOpen((o) => !o)}
+                    aria-label="Account menu"
                     aria-expanded={menuOpen}
                     aria-haspopup="true"
                   >

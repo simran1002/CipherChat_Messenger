@@ -2,6 +2,7 @@ import * as keyStore from "../crypto/keyStore";
 import * as vault from "../crypto/vault";
 import { wipeSearchIndex } from "../search/searchClient";
 import * as OfflineQueue from "./OfflineQueue";
+import e2eeService from "./E2EEService";
 
 /**
  * Keeps this browser's local E2EE data (identity, v1/v2 sessions, the decrypted-message vault, the
@@ -32,6 +33,10 @@ export async function claim(userId: string): Promise<void> {
       wipeSearchIndex(),
       OfflineQueue.clear(),
     ]);
+    // The stores are empty now, but E2EEService is a module singleton that caches the previous account's
+    // identity and "ready" status in memory for the life of the tab. Without dropping that, a second account
+    // signing in WITHOUT a page reload would keep encrypting under the first account's identity.
+    e2eeService.refresh();
   }
   localStorage.setItem(OWNER_KEY, userId);
 }
