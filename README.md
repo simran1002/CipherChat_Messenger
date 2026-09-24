@@ -21,6 +21,7 @@ conversations in a third-party SaaS — legal clinics, healthcare practices, new
 [Why it's different](docs/WHY-DIFFERENT.md) ·
 [Architecture](docs/ARCHITECTURE.md) ·
 [System design](docs/SYSTEM_DESIGN.md) ·
+[Low-level design](docs/LLD.md) ·
 [API](docs/API.md) ·
 [15 ADRs](docs/adr/) ·
 [Demo script](docs/DEMO.md)
@@ -262,6 +263,7 @@ Every row below was produced in this repository's state, on one Windows 11 lapto
 |---|---|
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | modules, request paths, real-time layer, cross-cutting concerns |
 | [SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) | requirements → estimates → deep dives → failure modes |
+| [LLD.md](docs/LLD.md) | low-level design: class diagrams, sequence diagrams of every hot path, state machines, the complete transaction/lock/idempotency table, error model, resource limits |
 | [DATABASE_DESIGN.md](docs/DATABASE_DESIGN.md) | schema, the indexes that carry the guarantees, connection budget |
 | [KAFKA_DESIGN.md](docs/KAFKA_DESIGN.md) | topics, outbox, idempotent consumers, retry/DLT |
 | [SCALABILITY.md](docs/SCALABILITY.md) | target envelope, stateless-replica rule, what scales how, honest limits |

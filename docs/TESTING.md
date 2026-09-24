@@ -1,6 +1,6 @@
 # Testing
 
-Four layers, cheapest first. Each layer exists because the one below it cannot see a whole class of failure — and the top layer earned its place by finding real defects the lower ones had passed.
+Four layers, cheapest first. The classes, sequences and state machines these layers exercise are drawn in [LLD.md](LLD.md). Each layer exists because the one below it cannot see a whole class of failure — and the top layer earned its place by finding real defects the lower ones had passed.
 
 | Layer | What it proves | Where | Run | CI job |
 |---|---|---|---|---|
